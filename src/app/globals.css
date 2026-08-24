@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* La Antesala brand — from logo */
+:root {
+  --bg: #000000;
+  --bg-glow: #1a2740;
+  --surface: #152033;
+  --surface-2: #1c2a42;
+  --text: #f7efd2;
+  --muted: #a8b4c7;
+  --accent: #f06a12;
+  --accent-soft: rgba(240, 106, 18, 0.16);
+  --cream: #f6e7a0;
+  --navy: #152033;
+  --terracotta: #c2410c;
+  --danger: #e23b2f;
+  --warning: #f6e7a0;
+  --line: rgba(247, 239, 210, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+body {
+  background:
+    radial-gradient(1100px 560px at 8% -8%, rgba(240, 106, 18, 0.14), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(21, 32, 51, 0.55), transparent 50%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-body), system-ui, sans-serif;
+  min-height: 100dvh;
+}
+
+.font-display {
+  font-family: var(--font-display), var(--font-body), system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.font-code {
+  font-family: var(--font-display), var(--font-body), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.22em;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.85rem 1.35rem;
+  font-weight: 600;
+  transition: transform 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+  cursor: pointer;
+  border: none;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--navy);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff5f4;
+}
+
+.btn-warning {
+  background: var(--warning);
+  color: var(--navy);
+}
+
+.input {
+  width: 100%;
+  border-radius: 0.9rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.9rem 1rem;
+  font-size: 1rem;
+  outline: none;
+  color-scheme: dark;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.card-panel {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  backdrop-filter: blur(8px);
+}
