@@ -3,18 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
-    "start": "tsx server.ts",
+    "start": "next start -H 0.0.0.0 -p 3000",
     "lint": "eslint"
   },
   "dependencies": {
+    "@upstash/redis": "^1.35.3",
     "next": "16.3.0",
     "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3",
     "uuid": "^14.0.1"
   },
   "devDependencies": {

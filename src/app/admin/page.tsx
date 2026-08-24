@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { HostBreadcrumbs } from "@/components/HostBreadcrumbs";
 import { HostNightModal } from "@/components/HostNightModal";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
@@ -48,6 +48,7 @@ export default function AdminPage() {
   const [draftQuestions, setDraftQuestions] = useState<Question[]>(SAMPLE_QUESTIONS);
   const [draftTimeLimit, setDraftTimeLimit] = useState(30);
   const [modalOpen, setModalOpen] = useState(!adminState);
+  const [atHostHome, setAtHostHome] = useState(!adminState);
   const [hostReady, setHostReady] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [confirmEndNight, setConfirmEndNight] = useState(false);
@@ -66,10 +67,10 @@ export default function AdminPage() {
   }, [router]);
 
   useEffect(() => {
-    if (adminState) {
+    if (adminState && !atHostHome) {
       setModalOpen(false);
     }
-  }, [adminState]);
+  }, [adminState, atHostHome]);
 
   useEffect(() => {
     if (!adminState) return;
@@ -91,6 +92,26 @@ export default function AdminPage() {
     [listNights],
   );
 
+  function goToHostHome() {
+    setAtHostHome(true);
+    setModalOpen(true);
+  }
+
+  function goToNight() {
+    setAtHostHome(false);
+    setModalOpen(false);
+  }
+
+  const hostCrumbs = (
+    <HostBreadcrumbs
+      nightTitle={adminState?.title}
+      phase={adminState?.phase}
+      atHostHome={modalOpen || !adminState}
+      onHostHome={goToHostHome}
+      onOpenNight={adminState ? goToNight : undefined}
+    />
+  );
+
   async function handleCreate(input: { scheduledDate: string }) {
     setBusy(true);
     setError(null);
@@ -103,6 +124,7 @@ export default function AdminPage() {
           id: crypto.randomUUID(),
         })),
       });
+      setAtHostHome(false);
       setModalOpen(false);
     } catch {
       /* surfaced */
@@ -116,6 +138,7 @@ export default function AdminPage() {
     setError(null);
     try {
       await adminJoin();
+      setAtHostHome(false);
       setModalOpen(false);
     } catch {
       /* surfaced */
@@ -129,6 +152,7 @@ export default function AdminPage() {
     setError(null);
     try {
       await adminJoin(code);
+      setAtHostHome(false);
       setModalOpen(false);
     } catch {
       /* surfaced */
@@ -170,9 +194,7 @@ export default function AdminPage() {
     return (
       <main className="relative min-h-dvh">
         <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-4 px-6 py-12">
-          <Link href="/" className="text-sm text-[var(--muted)] hover:text-[var(--text)]">
-            ← Home
-          </Link>
+          {hostCrumbs}
           <h1 className="font-display text-4xl">Host admin</h1>
           <p className="text-[var(--muted)]">
             Create a titled trivia night, resume the current one, or look up past
@@ -189,6 +211,7 @@ export default function AdminPage() {
           connected={connected}
           busy={busy}
           error={error}
+          breadcrumbs={hostCrumbs}
           onCreate={handleCreate}
           onResume={handleResume}
           onResumeNight={handleResumeNight}
@@ -217,7 +240,8 @@ export default function AdminPage() {
       <section className="flex flex-col gap-5">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-[var(--accent)]">
+            {hostCrumbs}
+            <p className="mt-3 text-sm uppercase tracking-[0.2em] text-[var(--accent)]">
               Admin control
             </p>
             <h1 className="font-display text-3xl sm:text-4xl">{adminState.title}</h1>
@@ -474,8 +498,19 @@ export default function AdminPage() {
         )}
 
         {phase === "finished" && (
-          <div className="card-panel p-5">
+          <div className="card-panel space-y-4 p-5">
             <h2 className="font-display text-3xl">Night complete</h2>
+            <p className="text-[var(--muted)]">
+              Final scores are locked. Start another night from Host whenever
+              you&apos;re ready.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={goToHostHome}
+            >
+              Create a new night
+            </button>
           </div>
         )}
 

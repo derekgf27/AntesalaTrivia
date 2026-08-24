@@ -64,6 +64,12 @@ function HostPinModal({
             autoFocus
             autoComplete="off"
           />
+          {!connected && (
+            <p className="text-sm text-[var(--warning)]">
+              Can&apos;t reach the game server. On Vercel, add Upstash Redis
+              env vars. Locally, refresh after the dev server is running.
+            </p>
+          )}
           {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
           <button
             type="submit"

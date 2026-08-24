@@ -6,6 +6,14 @@ import {
   findOpenNight,
   upsertNight,
 } from "./nightHistory";
+import {
+  assertStoreReady,
+  getCurrentCode,
+  getRoomData,
+  setCurrentCode,
+  setRoomData,
+  withLock,
+} from "./persist";
 import type {
   AdminGameState,
   CreateNightInput,
@@ -19,6 +27,8 @@ import type {
 } from "./types";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const REVEAL_DELAY_MS = 2500;
+const ONLINE_MS = 20_000;
 
 function generateCode(length = 4): string {
   let code = "";
@@ -39,43 +49,295 @@ export type GameRoom = {
   questions: Question[];
   questionIndex: number;
   timerEndsAt: number | null;
-  /** When set, the question timer is paused with this much time left. */
   timerPausedRemainingMs: number | null;
-  /** Shared countdown for every question. */
   timeLimitSec: number;
   teams: Team[];
-  players: Map<string, Player>;
-  /** teamId -> option index for current question */
-  currentAnswers: Map<string, number>;
+  players: Record<string, Player>;
+  currentAnswers: Record<string, number>;
   reveal: RevealInfo | null;
-  timerHandle: ReturnType<typeof setTimeout> | null;
-  adminSocketId: string | null;
-  displaySocketIds: Set<string>;
+  lockedAt: number | null;
 };
 
-class GameStore {
-  private rooms = new Map<string, GameRoom>();
-  private currentCode: string | null = null;
+function cloneQuestions(questions: Question[]): Question[] {
+  return questions.map((q) => ({
+    ...q,
+    options: [...q.options] as Question["options"],
+  }));
+}
 
-  getCurrentRoom(): GameRoom | undefined {
-    if (!this.currentCode) return undefined;
-    return this.rooms.get(this.currentCode);
+export function advanceTimers(room: GameRoom) {
+  const now = Date.now();
+  if (
+    room.phase === "question" &&
+    room.timerPausedRemainingMs == null &&
+    room.timerEndsAt &&
+    now >= room.timerEndsAt
+  ) {
+    lockAnswers(room);
+  }
+  if (room.phase === "locked") {
+    if (!room.lockedAt) room.lockedAt = now;
+    if (now >= room.lockedAt + REVEAL_DELAY_MS) {
+      revealAnswers(room);
+    }
+  }
+}
+
+function toNightRecord(room: GameRoom): NightRecord {
+  return {
+    id: room.id,
+    title: room.title,
+    scheduledDate: room.scheduledDate,
+    code: room.code,
+    expectedTeams: room.expectedTeams,
+    createdAt: room.createdAt,
+    finishedAt: room.phase === "finished" ? new Date().toISOString() : null,
+    phase: room.phase,
+    teams: [...room.teams].sort(
+      (a, b) => b.score - a.score || a.name.localeCompare(b.name),
+    ),
+    questions: room.questions,
+    questionIndex: room.questionIndex,
+    reveal: room.reveal,
+    timeLimitSec: room.timeLimitSec,
+  };
+}
+
+async function persistRoom(room: GameRoom) {
+  await setRoomData(room.code, room);
+  if (room.phase !== "finished") await setCurrentCode(room.code);
+  await upsertNight(toNightRecord(room));
+}
+
+function restoreFromRecord(record: NightRecord): GameRoom {
+  const code = record.code.toUpperCase().trim();
+  const hasQuestions = Boolean(record.questions?.length);
+  const questions = hasQuestions
+    ? cloneQuestions(record.questions!)
+    : SAMPLE_QUESTIONS.map((q) => ({ ...q, id: randomUUID() }));
+
+  let phase = (record.phase as GamePhase) || "lobby";
+  let questionIndex =
+    typeof record.questionIndex === "number" ? record.questionIndex : -1;
+
+  if (phase === "question" || phase === "locked") {
+    phase = questionIndex >= 0 ? "reveal" : "lobby";
+  }
+  if (!hasQuestions && phase !== "finished") {
+    phase = "lobby";
+    questionIndex = -1;
+  }
+  if (phase === "lobby") questionIndex = -1;
+
+  return {
+    id: record.id,
+    code,
+    title: record.title,
+    scheduledDate:
+      record.scheduledDate ||
+      record.createdAt?.slice(0, 10) ||
+      toDateInputValue(),
+    expectedTeams: record.expectedTeams || 64,
+    createdAt: record.createdAt,
+    phase,
+    questions,
+    questionIndex,
+    timerEndsAt: null,
+    timerPausedRemainingMs: null,
+    timeLimitSec: Math.max(
+      5,
+      Math.min(
+        180,
+        record.timeLimitSec || record.questions?.[0]?.timeLimitSec || 30,
+      ),
+    ),
+    teams: (record.teams || []).map((t) => ({ ...t })),
+    players: {},
+    currentAnswers: {},
+    reveal:
+      phase === "reveal" || phase === "finished" ? (record.reveal ?? null) : null,
+    lockedAt: null,
+  };
+}
+
+export function toPublic(room: GameRoom): PublicGameState {
+  const q =
+    room.phase === "lobby" || room.questionIndex < 0
+      ? null
+      : room.questions[room.questionIndex];
+
+  return {
+    code: room.code,
+    title: room.title,
+    scheduledDate: room.scheduledDate,
+    expectedTeams: room.expectedTeams,
+    phase: room.phase,
+    questionIndex: Math.max(0, room.questionIndex),
+    questionCount: room.questions.length,
+    question: q
+      ? {
+          id: q.id,
+          text: q.text,
+          options: q.options,
+          timeLimitSec: room.timeLimitSec,
+        }
+      : null,
+    timerEndsAt: room.timerEndsAt,
+    timerPaused: room.timerPausedRemainingMs != null,
+    timerPausedRemainingMs: room.timerPausedRemainingMs,
+    timeLimitSec: room.timeLimitSec,
+    teams: [...room.teams].sort(
+      (a, b) => b.score - a.score || a.name.localeCompare(b.name),
+    ),
+    reveal:
+      room.phase === "reveal" || room.phase === "finished" ? room.reveal : null,
+    answeredTeamIds: Object.keys(room.currentAnswers),
+  };
+}
+
+export function toAdmin(room: GameRoom): AdminGameState {
+  const now = Date.now();
+  const connectedTeamIds = [
+    ...new Set(
+      Object.values(room.players)
+        .filter((p) => now - p.lastSeenAt < ONLINE_MS)
+        .map((p) => p.teamId),
+    ),
+  ];
+  return {
+    ...toPublic(room),
+    id: room.id,
+    questions: room.questions,
+    currentAnswers: { ...room.currentAnswers },
+    createdAt: room.createdAt,
+    reveal: room.reveal,
+    connectedTeamIds,
+  };
+}
+
+function lockAnswers(room: GameRoom) {
+  if (room.phase !== "question") return;
+  room.phase = "locked";
+  room.timerEndsAt = null;
+  room.timerPausedRemainingMs = null;
+  room.reveal = null;
+  room.lockedAt = Date.now();
+}
+
+function revealAnswers(room: GameRoom) {
+  if (room.phase !== "locked" && room.phase !== "question") return;
+  const q = room.questions[room.questionIndex];
+  const awarded: RevealInfo["awarded"] = [];
+
+  for (const [teamId, answer] of Object.entries(room.currentAnswers)) {
+    if (answer === q.correctIndex) {
+      const team = room.teams.find((t) => t.id === teamId);
+      if (team) {
+        team.score += 1;
+        awarded.push({ teamId, points: 1 });
+      }
+    }
   }
 
-  createRoom(
+  room.reveal = { correctIndex: q.correctIndex, awarded };
+  room.phase = "reveal";
+  room.timerEndsAt = null;
+  room.timerPausedRemainingMs = null;
+  room.lockedAt = null;
+}
+
+function armQuestionTimer(room: GameRoom, ms: number) {
+  room.timerPausedRemainingMs = null;
+  room.lockedAt = null;
+  room.timerEndsAt = Date.now() + ms;
+}
+
+function startQuestionOnRoom(room: GameRoom): "started" | "finished" {
+  if (room.phase === "finished") throw new Error("Game already finished");
+  if (room.phase === "question" || room.phase === "locked") {
+    throw new Error("Question already in progress");
+  }
+
+  const nextIndex = room.questionIndex + 1;
+  if (nextIndex >= room.questions.length) {
+    room.phase = "finished";
+    room.timerEndsAt = null;
+    room.timerPausedRemainingMs = null;
+    room.lockedAt = null;
+    return "finished";
+  }
+
+  room.questionIndex = nextIndex;
+  room.phase = "question";
+  room.currentAnswers = {};
+  room.reveal = null;
+  armQuestionTimer(room, Math.max(5, room.timeLimitSec) * 1000);
+  return "started";
+}
+
+class GameStore {
+  async loadRoom(code: string): Promise<GameRoom | undefined> {
+    const live = await getRoomData<GameRoom>(code);
+    if (!live) return undefined;
+    if (!live.players) live.players = {};
+    if (!live.currentAnswers) live.currentAnswers = {};
+    advanceTimers(live);
+    return live;
+  }
+
+  async getRoom(code: string): Promise<GameRoom | undefined> {
+    return this.loadRoom(code);
+  }
+
+  async snapshot(
+    code: string,
+    opts?: { playerId?: string; admin?: boolean },
+  ): Promise<PublicGameState | AdminGameState> {
+    assertStoreReady();
+    return withLock(code.toUpperCase(), async () => {
+      const room = await this.getRoomOrRestore(code);
+      if (!room) throw new Error("Game not found");
+      advanceTimers(room);
+      if (opts?.playerId && room.players[opts.playerId]) {
+        room.players[opts.playerId].lastSeenAt = Date.now();
+      }
+      await persistRoom(room);
+      return opts?.admin ? toAdmin(room) : toPublic(room);
+    });
+  }
+
+  async save(room: GameRoom) {
+    await persistRoom(room);
+  }
+
+  async mutate<T>(
+    code: string,
+    fn: (room: GameRoom) => T | Promise<T>,
+  ): Promise<T> {
+    assertStoreReady();
+    return withLock(code.toUpperCase(), async () => {
+      const room = await this.loadRoom(code);
+      if (!room) throw new Error("Game not found");
+      const result = await fn(room);
+      await persistRoom(room);
+      return result;
+    });
+  }
+
+  async createRoom(
     input: CreateNightInput = {
       scheduledDate: toDateInputValue(),
       expectedTeams: 64,
     },
-  ): GameRoom {
+  ): Promise<GameRoom> {
+    assertStoreReady();
     let code = generateCode();
-    while (this.rooms.has(code)) code = generateCode();
+    while (await getRoomData(code)) code = generateCode();
 
     const rawDate = input.scheduledDate?.trim() || "";
     const scheduledDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
       ? rawDate
       : toDateInputValue();
-    const title = titleFromScheduledDate(scheduledDate);
     const expectedTeams = Math.max(
       1,
       Math.min(64, Math.floor(input.expectedTeams) || 64),
@@ -84,234 +346,95 @@ class GameStore {
     const room: GameRoom = {
       id: randomUUID(),
       code,
-      title,
+      title: titleFromScheduledDate(scheduledDate),
       scheduledDate,
       expectedTeams,
       createdAt: new Date().toISOString(),
       phase: "lobby",
       questions:
         input.questions && input.questions.length > 0
-          ? input.questions
+          ? cloneQuestions(input.questions)
           : SAMPLE_QUESTIONS.map((q) => ({ ...q, id: randomUUID() })),
       questionIndex: -1,
       timerEndsAt: null,
       timerPausedRemainingMs: null,
       timeLimitSec: 30,
       teams: [],
-      players: new Map(),
-      currentAnswers: new Map(),
+      players: {},
+      currentAnswers: {},
       reveal: null,
-      timerHandle: null,
-      adminSocketId: null,
-      displaySocketIds: new Set(),
+      lockedAt: null,
     };
 
-    this.rooms.set(code, room);
-    this.currentCode = code;
-    this.persistRoom(room);
+    await persistRoom(room);
     return room;
   }
 
-  getRoom(code: string): GameRoom | undefined {
-    return this.rooms.get(code.toUpperCase().trim());
-  }
-
-  /** Bring back the latest unfinished night after a server restart. */
-  hydrateOpenNight(): GameRoom | undefined {
-    const live = this.getCurrentRoom();
-    if (live) return live;
-    const open = findOpenNight();
+  async hydrateOpenNight(): Promise<GameRoom | undefined> {
+    const current = await getCurrentCode();
+    if (current) {
+      const live = await this.loadRoom(current);
+      if (live && live.phase !== "finished") return live;
+    }
+    const open = await findOpenNight();
     if (!open) return undefined;
     return this.restoreRoom(open);
   }
 
-  getRoomOrRestore(code: string): GameRoom | undefined {
-    const live = this.getRoom(code);
+  async getRoomOrRestore(code: string): Promise<GameRoom | undefined> {
+    const live = await this.loadRoom(code);
     if (live) return live;
-    const record = findNightByCode(code);
+    const record = await findNightByCode(code);
     if (!record) return undefined;
-    if (record.finishedAt || record.phase === "finished") {
-      return undefined;
-    }
+    if (record.finishedAt || record.phase === "finished") return undefined;
     return this.restoreRoom(record);
   }
 
-  restoreRoom(record: NightRecord): GameRoom {
-    const code = record.code.toUpperCase().trim();
-    const existing = this.rooms.get(code);
-    if (existing) {
-      this.currentCode = existing.code;
-      return existing;
-    }
-
-    const hasQuestions = Boolean(record.questions?.length);
-    const questions = hasQuestions
-      ? record.questions!.map((q) => ({ ...q }))
-      : SAMPLE_QUESTIONS.map((q) => ({ ...q, id: randomUUID() }));
-
-    let phase = (record.phase as GamePhase) || "lobby";
-    let questionIndex =
-      typeof record.questionIndex === "number" ? record.questionIndex : -1;
-
-    // In-flight timers cannot survive a restart.
-    if (phase === "question" || phase === "locked") {
-      phase = questionIndex >= 0 ? "reveal" : "lobby";
-    }
-    // Older saves lacked the question bank — safest to reopen in lobby.
-    if (!hasQuestions && phase !== "finished") {
-      phase = "lobby";
-      questionIndex = -1;
-    }
-    if (phase === "lobby") questionIndex = -1;
-
-    const room: GameRoom = {
-      id: record.id,
-      code,
-      title: record.title,
-      scheduledDate:
-        record.scheduledDate ||
-        record.createdAt?.slice(0, 10) ||
-        toDateInputValue(),
-      expectedTeams: record.expectedTeams || 64,
-      createdAt: record.createdAt,
-      phase,
-      questions,
-      questionIndex,
-      timerEndsAt: null,
-      timerPausedRemainingMs: null,
-      timeLimitSec: Math.max(
-        5,
-        Math.min(
-          180,
-          record.timeLimitSec ||
-            record.questions?.[0]?.timeLimitSec ||
-            30,
-        ),
-      ),
-      teams: (record.teams || []).map((t) => ({ ...t })),
-      players: new Map(),
-      currentAnswers: new Map(),
-      reveal:
-        phase === "reveal" || phase === "finished"
-          ? record.reveal ?? null
-          : null,
-      timerHandle: null,
-      adminSocketId: null,
-      displaySocketIds: new Set(),
-    };
-
-    this.rooms.set(code, room);
-    if (phase !== "finished") this.currentCode = code;
-    this.persistRoom(room);
+  async restoreRoom(record: NightRecord): Promise<GameRoom> {
+    const existing = await this.loadRoom(record.code);
+    if (existing) return existing;
+    const room = restoreFromRecord(record);
+    await persistRoom(room);
     return room;
   }
 
-  deleteRoom(code: string) {
-    const room = this.getRoom(code);
+  async touchPlayer(code: string, playerId: string) {
+    const room = await this.loadRoom(code);
     if (!room) return;
-    if (room.timerHandle) clearTimeout(room.timerHandle);
-    this.rooms.delete(room.code);
-    if (this.currentCode === room.code) this.currentCode = null;
-  }
-
-  toNightRecord(room: GameRoom): NightRecord {
-    return {
-      id: room.id,
-      title: room.title,
-      scheduledDate: room.scheduledDate,
-      code: room.code,
-      expectedTeams: room.expectedTeams,
-      createdAt: room.createdAt,
-      finishedAt: room.phase === "finished" ? new Date().toISOString() : null,
-      phase: room.phase,
-      teams: [...room.teams].sort(
-        (a, b) => b.score - a.score || a.name.localeCompare(b.name),
-      ),
-      questions: room.questions,
-      questionIndex: room.questionIndex,
-      reveal: room.reveal,
-      timeLimitSec: room.timeLimitSec,
-    };
-  }
-
-  persistRoom(room: GameRoom) {
-    upsertNight(this.toNightRecord(room));
-  }
-
-  toPublic(room: GameRoom): PublicGameState {
-    const q =
-      room.phase === "lobby" || room.questionIndex < 0
-        ? null
-        : room.questions[room.questionIndex];
-
-    return {
-      code: room.code,
-      title: room.title,
-      scheduledDate: room.scheduledDate,
-      expectedTeams: room.expectedTeams,
-      phase: room.phase,
-      questionIndex: Math.max(0, room.questionIndex),
-      questionCount: room.questions.length,
-      question: q
-        ? {
-            id: q.id,
-            text: q.text,
-            options: q.options,
-            timeLimitSec: room.timeLimitSec,
-          }
-        : null,
-      timerEndsAt: room.timerEndsAt,
-      timerPaused: room.timerPausedRemainingMs != null,
-      timerPausedRemainingMs: room.timerPausedRemainingMs,
-      timeLimitSec: room.timeLimitSec,
-      teams: [...room.teams].sort(
-        (a, b) => b.score - a.score || a.name.localeCompare(b.name),
-      ),
-      reveal:
-        room.phase === "reveal" || room.phase === "finished" ? room.reveal : null,
-      answeredTeamIds: [...room.currentAnswers.keys()],
-    };
-  }
-
-  toAdmin(room: GameRoom): AdminGameState {
-    const connectedTeamIds = [
-      ...new Set(
-        [...room.players.values()]
-          .filter((p) => Boolean(p.socketId))
-          .map((p) => p.teamId),
-      ),
-    ];
-    return {
-      ...this.toPublic(room),
-      id: room.id,
-      questions: room.questions,
-      currentAnswers: Object.fromEntries(room.currentAnswers),
-      createdAt: room.createdAt,
-      reveal: room.reveal,
-      connectedTeamIds,
-    };
+    const player = room.players[playerId];
+    if (!player) return;
+    player.lastSeenAt = Date.now();
+    await persistRoom(room);
   }
 
   addPlayer(
     room: GameRoom,
     opts: {
-      socketId: string;
       playerName: string;
       mode: "solo" | "createTeam" | "joinTeam";
       teamName?: string;
       teamId?: string;
+      playerId?: string;
     },
   ): { player: Player; team: Team } {
     const name = opts.playerName.trim().slice(0, 24) || "Player";
+    const now = Date.now();
 
-    for (const existing of room.players.values()) {
+    if (opts.playerId && room.players[opts.playerId]) {
+      const player = room.players[opts.playerId];
+      player.lastSeenAt = now;
+      const team = room.teams.find((t) => t.id === player.teamId);
+      if (team) return { player, team };
+    }
+
+    for (const existing of Object.values(room.players)) {
       if (
         existing.name.toLowerCase() === name.toLowerCase() &&
         (opts.mode === "joinTeam" ? existing.teamId === opts.teamId : true)
       ) {
         const team = room.teams.find((t) => t.id === existing.teamId);
         if (team) {
-          existing.socketId = opts.socketId;
+          existing.lastSeenAt = now;
           return { player: existing, team };
         }
       }
@@ -323,12 +446,7 @@ class GameStore {
       if (room.teams.length >= room.expectedTeams) {
         throw new Error(`Lobby is full (${room.expectedTeams} teams max)`);
       }
-      team = {
-        id: randomUUID(),
-        name: name,
-        isSolo: true,
-        score: 0,
-      };
+      team = { id: randomUUID(), name, isSolo: true, score: 0 };
       room.teams.push(team);
     } else if (opts.mode === "createTeam") {
       const teamName = (opts.teamName || name).trim().slice(0, 28) || "Team";
@@ -341,12 +459,7 @@ class GameStore {
         if (room.teams.length >= room.expectedTeams) {
           throw new Error(`Lobby is full (${room.expectedTeams} teams max)`);
         }
-        team = {
-          id: randomUUID(),
-          name: teamName,
-          isSolo: false,
-          score: 0,
-        };
+        team = { id: randomUUID(), name: teamName, isSolo: false, score: 0 };
         room.teams.push(team);
       }
     } else {
@@ -358,40 +471,18 @@ class GameStore {
       id: randomUUID(),
       name,
       teamId: team.id,
-      socketId: opts.socketId,
+      lastSeenAt: now,
     };
-    room.players.set(player.id, player);
-    this.persistRoom(room);
+    room.players[player.id] = player;
     return { player, team };
-  }
-
-  removePlayerBySocket(socketId: string): GameRoom | null {
-    for (const room of this.rooms.values()) {
-      for (const player of room.players.values()) {
-        if (player.socketId === socketId) {
-          player.socketId = "";
-          return room;
-        }
-      }
-      if (room.adminSocketId === socketId) {
-        room.adminSocketId = null;
-        return room;
-      }
-      if (room.displaySocketIds.has(socketId)) {
-        room.displaySocketIds.delete(socketId);
-        return room;
-      }
-    }
-    return null;
   }
 
   kickTeam(room: GameRoom, teamId: string) {
     room.teams = room.teams.filter((t) => t.id !== teamId);
-    room.currentAnswers.delete(teamId);
-    for (const [id, player] of room.players) {
-      if (player.teamId === teamId) room.players.delete(id);
+    delete room.currentAnswers[teamId];
+    for (const [id, player] of Object.entries(room.players)) {
+      if (player.teamId === teamId) delete room.players[id];
     }
-    this.persistRoom(room);
   }
 
   adjustScore(room: GameRoom, teamId: string, delta: number) {
@@ -400,14 +491,9 @@ class GameStore {
     const step = delta > 0 ? 1 : delta < 0 ? -1 : 0;
     if (!step) throw new Error("Invalid score change");
     team.score = Math.max(0, team.score + step);
-    this.persistRoom(room);
   }
 
-  setQuestions(
-    room: GameRoom,
-    questions: Question[],
-    timeLimitSec?: number,
-  ) {
+  setQuestions(room: GameRoom, questions: Question[], timeLimitSec?: number) {
     if (room.phase === "finished") {
       throw new Error("Can't edit questions after the night ends");
     }
@@ -424,58 +510,10 @@ class GameStore {
       ...q,
       timeLimitSec: room.timeLimitSec,
     }));
-    this.persistRoom(room);
   }
 
-  startQuestion(
-    room: GameRoom,
-    onUpdate: (room: GameRoom) => void,
-  ): "started" | "finished" {
-    if (room.phase === "finished") throw new Error("Game already finished");
-    if (room.phase === "question" || room.phase === "locked") {
-      throw new Error("Question already in progress");
-    }
-
-    const nextIndex = room.questionIndex + 1;
-    if (nextIndex >= room.questions.length) {
-      room.phase = "finished";
-      room.timerEndsAt = null;
-      room.timerPausedRemainingMs = null;
-      this.persistRoom(room);
-      return "finished";
-    }
-
-    if (room.timerHandle) clearTimeout(room.timerHandle);
-
-    room.questionIndex = nextIndex;
-    room.phase = "question";
-    room.currentAnswers = new Map();
-    room.reveal = null;
-    room.timerPausedRemainingMs = null;
-
-    const ms = Math.max(5, room.timeLimitSec) * 1000;
-    this.armQuestionTimer(room, ms, onUpdate);
-
-    return "started";
-  }
-
-  /** Schedule lock → reveal from a remaining duration. */
-  private armQuestionTimer(
-    room: GameRoom,
-    ms: number,
-    onUpdate: (room: GameRoom) => void,
-  ) {
-    if (room.timerHandle) clearTimeout(room.timerHandle);
-    room.timerPausedRemainingMs = null;
-    room.timerEndsAt = Date.now() + ms;
-    room.timerHandle = setTimeout(() => {
-      this.lockAnswers(room);
-      onUpdate(room);
-      room.timerHandle = setTimeout(() => {
-        this.revealAnswers(room);
-        onUpdate(room);
-      }, 2500);
-    }, ms);
+  startQuestion(room: GameRoom) {
+    return startQuestionOnRoom(room);
   }
 
   pauseTimer(room: GameRoom) {
@@ -484,97 +522,38 @@ class GameStore {
       throw new Error("Timer is already paused");
     }
     if (!room.timerEndsAt) throw new Error("No timer running");
-
-    const remaining = Math.max(0, room.timerEndsAt - Date.now());
-    if (room.timerHandle) {
-      clearTimeout(room.timerHandle);
-      room.timerHandle = null;
-    }
-    room.timerPausedRemainingMs = remaining;
+    room.timerPausedRemainingMs = Math.max(0, room.timerEndsAt - Date.now());
     room.timerEndsAt = null;
   }
 
-  resumeTimer(room: GameRoom, onUpdate: (room: GameRoom) => void) {
+  resumeTimer(room: GameRoom) {
     if (room.phase !== "question") throw new Error("No active question");
     if (room.timerPausedRemainingMs == null) {
       throw new Error("Timer is not paused");
     }
-    const ms = Math.max(500, room.timerPausedRemainingMs);
-    this.armQuestionTimer(room, ms, onUpdate);
+    armQuestionTimer(room, Math.max(500, room.timerPausedRemainingMs));
   }
 
-  /** Reset the clock to the full question time limit. */
-  restartTimer(room: GameRoom, onUpdate: (room: GameRoom) => void) {
+  restartTimer(room: GameRoom) {
     if (room.phase !== "question") throw new Error("No active question");
-    const ms = Math.max(5, room.timeLimitSec) * 1000;
-    this.armQuestionTimer(room, ms, onUpdate);
+    armQuestionTimer(room, Math.max(5, room.timeLimitSec) * 1000);
   }
 
-  /** Freeze answers — brief beat before showing the correct answer. */
-  lockAnswers(room: GameRoom) {
-    if (room.phase !== "question") return;
-    if (room.timerHandle) {
-      clearTimeout(room.timerHandle);
-      room.timerHandle = null;
-    }
-    room.phase = "locked";
-    room.timerEndsAt = null;
-    room.timerPausedRemainingMs = null;
-    room.reveal = null;
-  }
-
-  revealAnswers(room: GameRoom) {
-    if (room.phase !== "locked" && room.phase !== "question") return;
-    if (room.timerHandle) {
-      clearTimeout(room.timerHandle);
-      room.timerHandle = null;
-    }
-
-    const q = room.questions[room.questionIndex];
-    const awarded: RevealInfo["awarded"] = [];
-
-    for (const [teamId, answer] of room.currentAnswers) {
-      if (answer === q.correctIndex) {
-        const team = room.teams.find((t) => t.id === teamId);
-        if (team) {
-          team.score += 1;
-          awarded.push({ teamId, points: 1 });
-        }
-      }
-    }
-
-    room.reveal = { correctIndex: q.correctIndex, awarded };
-    room.phase = "reveal";
-    room.timerEndsAt = null;
-    room.timerPausedRemainingMs = null;
-    this.persistRoom(room);
-  }
-
-  forceLock(room: GameRoom, onUpdate: (room: GameRoom) => void) {
+  forceLock(room: GameRoom) {
     if (room.phase === "question") {
-      this.lockAnswers(room);
-      onUpdate(room);
-      room.timerHandle = setTimeout(() => {
-        this.revealAnswers(room);
-        onUpdate(room);
-      }, 2500);
+      lockAnswers(room);
       return;
     }
     if (room.phase === "locked") {
-      this.revealAnswers(room);
-      onUpdate(room);
+      revealAnswers(room);
     }
   }
 
   finishGame(room: GameRoom) {
-    if (room.timerHandle) {
-      clearTimeout(room.timerHandle);
-      room.timerHandle = null;
-    }
     room.phase = "finished";
     room.timerEndsAt = null;
     room.timerPausedRemainingMs = null;
-    this.persistRoom(room);
+    room.lockedAt = null;
   }
 
   submitAnswer(room: GameRoom, teamId: string, optionIndex: number) {
@@ -587,7 +566,7 @@ class GameStore {
       throw new Error("Time is up");
     }
     if (optionIndex < 0 || optionIndex > 3) throw new Error("Invalid answer");
-    room.currentAnswers.set(teamId, optionIndex);
+    room.currentAnswers[teamId] = optionIndex;
   }
 }
 

@@ -17,7 +17,7 @@ export type Player = {
   id: string;
   name: string;
   teamId: string;
-  socketId: string;
+  lastSeenAt: number;
 };
 
 export type GamePhase = "lobby" | "question" | "locked" | "reveal" | "finished";

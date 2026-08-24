@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { NightRecord } from "@/lib/game/types";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
 import { titleFromScheduledDate, toDateInputValue } from "@/lib/game/dateUtils";
@@ -13,6 +13,7 @@ export function HostNightModal({
   connected,
   busy,
   error,
+  breadcrumbs,
   onCreate,
   onResume,
   onResumeNight,
@@ -22,6 +23,7 @@ export function HostNightModal({
   connected: boolean;
   busy: boolean;
   error: string | null;
+  breadcrumbs?: ReactNode;
   onCreate: (input: { scheduledDate: string }) => Promise<void>;
   onResume: () => Promise<void>;
   onResumeNight?: (code: string) => Promise<void>;
@@ -85,10 +87,11 @@ export function HostNightModal({
         className="card-panel flex h-[min(640px,90dvh)] w-full max-w-4xl flex-col overflow-hidden shadow-2xl"
       >
         <div className="shrink-0 border-b border-[var(--line)] px-6 py-4">
+          {breadcrumbs ? <div className="mb-3">{breadcrumbs}</div> : null}
           <p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">
             La Antesala
           </p>
-          <h2 id="host-night-title" className="font-display text-3xl">
+          <h2 id="host-night-title" className="font-display mt-1 text-3xl">
             Set up the night
           </h2>
         </div>

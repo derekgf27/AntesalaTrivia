@@ -9,8 +9,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { io, type Socket } from "socket.io-client";
-import { SOCKET_EVENTS } from "@/lib/socket/events";
 import type {
   AdminGameState,
   CreateNightInput,
@@ -59,6 +57,12 @@ type PeekLobbyResult = {
   teams: Team[];
 };
 
+type Watch = {
+  code: string;
+  view: "public" | "admin";
+  playerId?: string;
+};
+
 type GameContextValue = {
   connected: boolean;
   state: PublicGameState | null;
@@ -95,19 +99,6 @@ type GameContextValue = {
 
 const GameContext = createContext<GameContextValue | null>(null);
 
-let sharedSocket: Socket | null = null;
-
-function getSocket() {
-  if (typeof window === "undefined") return null;
-  if (!sharedSocket) {
-    sharedSocket = io({
-      autoConnect: true,
-      transports: ["websocket", "polling"],
-    });
-  }
-  return sharedSocket;
-}
-
 function readStoredPlayer(): StoredPlayer | null {
   try {
     const raw = sessionStorage.getItem(PLAYER_SESSION_KEY);
@@ -118,188 +109,193 @@ function readStoredPlayer(): StoredPlayer | null {
   }
 }
 
+async function postAction<T>(payload: Record<string, unknown>): Promise<T> {
+  const res = await fetch("/api/game", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json()) as T & { ok?: boolean; error?: string };
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || "Request failed");
+  }
+  return data;
+}
+
 export function GameProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<PublicGameState | null>(null);
   const [adminState, setAdminState] = useState<AdminGameState | null>(null);
   const [player, setPlayer] = useState<PlayerSession | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const [watch, setWatch] = useState<Watch | null>(null);
 
   useEffect(() => {
-    const s = getSocket();
-    setSocket(s);
-    if (!s) return;
-
-    const restoreSessions = () => {
-      if (isHostUnlocked()) {
-        const token = getHostToken();
-        const code = getRememberedAdminCode();
-        if (token) {
-          s.timeout(8000).emit(
-            SOCKET_EVENTS.ADMIN_JOIN,
-            { hostToken: token, code: code || undefined },
-            (
-              err: Error | null,
-              res: { ok?: boolean; state?: AdminGameState; error?: string },
-            ) => {
-              if (err || !res || res.ok === false || !res.state) return;
-              setAdminState(res.state);
-              setState(res.state);
-              setError(null);
-            },
-          );
-        }
-      }
-
-      // Prefer one role per browser tab: host > display > player.
-      if (isHostUnlocked()) return;
-
-      const displayCode = getRememberedDisplayCode();
-      if (displayCode) {
-        s.timeout(8000).emit(
-          SOCKET_EVENTS.DISPLAY_JOIN,
-          { code: displayCode },
-          (
-            err: Error | null,
-            res: { ok?: boolean; state?: PublicGameState; error?: string },
-          ) => {
-            if (err || !res || res.ok === false || !res.state) return;
-            setState(res.state);
-            rememberDisplayCode(res.state.code);
-          },
-        );
-        return;
-      }
-
-      const stored = readStoredPlayer();
-      if (stored) {
-        s.timeout(8000).emit(
-          SOCKET_EVENTS.PLAYER_JOIN,
-          {
-            code: stored.code,
-            playerName: stored.playerName,
-            mode: "joinTeam",
-            teamId: stored.teamId,
-            teamName: stored.teamName,
-          },
-          (
-            err: Error | null,
-            res: {
-              ok?: boolean;
-              state?: PublicGameState;
-              playerId?: string;
-              teamId?: string;
-              teamName?: string;
-              error?: string;
-            },
-          ) => {
-            if (err || !res || res.ok === false || !res.state || !res.playerId) {
-              return;
-            }
-            const session = {
-              playerId: res.playerId,
-              teamId: res.teamId!,
-              teamName: res.teamName!,
-            };
-            setPlayer(session);
-            setState(res.state);
-            sessionStorage.setItem(
-              PLAYER_SESSION_KEY,
-              JSON.stringify({
-                ...stored,
-                playerId: session.playerId,
-                teamId: session.teamId,
-                teamName: session.teamName,
-              }),
-            );
-          },
-        );
+    let cancelled = false;
+    const ping = async () => {
+      try {
+        const res = await fetch("/api/health");
+        const data = (await res.json()) as { ok?: boolean; error?: string };
+        if (cancelled) return;
+        setConnected(res.ok);
+        if (!res.ok && data.error) setError(data.error);
+      } catch {
+        if (!cancelled) setConnected(false);
       }
     };
-
-    const onConnect = () => {
-      setConnected(true);
-      restoreSessions();
-    };
-    const onDisconnect = () => setConnected(false);
-    const onState = (payload: PublicGameState) => setState(payload);
-    const onAdmin = (payload: AdminGameState) => {
-      setAdminState(payload);
-      setState(payload);
-      rememberAdminCode(payload.code);
-    };
-    const onError = (payload: { message: string }) => {
-      if (
-        payload.message === "Admin only" ||
-        payload.message === "Not the active admin"
-      ) {
-        restoreSessions();
-        setError("Reconnecting host controls…");
-        return;
-      }
-      setError(payload.message);
-    };
-    const onJoined = (payload: PlayerSession) => setPlayer(payload);
-
-    setConnected(s.connected);
-    if (s.connected) restoreSessions();
-    s.on("connect", onConnect);
-    s.on("disconnect", onDisconnect);
-    s.on(SOCKET_EVENTS.STATE, onState);
-    s.on(SOCKET_EVENTS.ADMIN_STATE, onAdmin);
-    s.on(SOCKET_EVENTS.ERROR, onError);
-    s.on(SOCKET_EVENTS.JOINED, onJoined);
-
+    void ping();
+    const id = window.setInterval(ping, 8000);
     return () => {
-      s.off("connect", onConnect);
-      s.off("disconnect", onDisconnect);
-      s.off(SOCKET_EVENTS.STATE, onState);
-      s.off(SOCKET_EVENTS.ADMIN_STATE, onAdmin);
-      s.off(SOCKET_EVENTS.ERROR, onError);
-      s.off(SOCKET_EVENTS.JOINED, onJoined);
+      cancelled = true;
+      window.clearInterval(id);
     };
   }, []);
 
-  const emitAck = useCallback(
-    <T,>(event: string, payload?: unknown) =>
-      new Promise<T>((resolve, reject) => {
-        if (!socket) {
-          reject(new Error("Not connected"));
-          return;
+  useEffect(() => {
+    if (!watch) return;
+    let cancelled = false;
+
+    const pull = async () => {
+      try {
+        const params = new URLSearchParams({
+          code: watch.code,
+          view: watch.view,
+        });
+        if (watch.view === "admin") {
+          const token = getHostToken();
+          if (token) params.set("hostToken", token);
         }
-        setError(null);
-        socket
-          .timeout(8000)
-          .emit(
-            event,
-            payload ?? {},
-            (
-              err: Error | null,
-              res: T & { ok?: boolean; error?: string },
-            ) => {
-              if (err) {
-                reject(err);
-                return;
-              }
-              if (res && typeof res === "object" && res.ok === false) {
-                const message = res.error || "Request failed";
-                setError(message);
-                reject(new Error(message));
-                return;
-              }
-              resolve(res);
-            },
-          );
-      }),
-    [socket],
-  );
+        if (watch.playerId) params.set("playerId", watch.playerId);
+        const res = await fetch(`/api/game?${params.toString()}`);
+        const data = (await res.json()) as {
+          ok?: boolean;
+          state?: PublicGameState;
+          adminState?: AdminGameState;
+        };
+        if (cancelled || !res.ok || !data.ok) return;
+        if (data.adminState) {
+          setAdminState(data.adminState);
+          setState(data.adminState);
+          rememberAdminCode(data.adminState.code);
+        } else if (data.state) {
+          setState(data.state);
+        }
+      } catch {
+        /* next poll retries */
+      }
+    };
+
+    void pull();
+    const id = window.setInterval(pull, 800);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [watch]);
+
+  useEffect(() => {
+    if (!connected) return;
+
+    if (isHostUnlocked()) {
+      const token = getHostToken();
+      const code = getRememberedAdminCode();
+      if (!token) return;
+      void postAction<{ adminState?: AdminGameState }>({
+        action: "adminJoin",
+        hostToken: token,
+        code: code || undefined,
+      })
+        .then((res) => {
+          if (!res.adminState) return;
+          setAdminState(res.adminState);
+          setState(res.adminState);
+          rememberAdminCode(res.adminState.code);
+          setWatch({ code: res.adminState.code, view: "admin" });
+        })
+        .catch(() => undefined);
+      return;
+    }
+
+    const displayCode = getRememberedDisplayCode();
+    if (displayCode) {
+      void postAction<{ state?: PublicGameState }>({
+        action: "displayJoin",
+        code: displayCode,
+      })
+        .then((res) => {
+          if (!res.state) return;
+          setState(res.state);
+          rememberDisplayCode(res.state.code);
+          setWatch({ code: res.state.code, view: "public" });
+        })
+        .catch(() => undefined);
+      return;
+    }
+
+    const stored = readStoredPlayer();
+    if (stored) {
+      void postAction<{
+        state?: PublicGameState;
+        playerId?: string;
+        teamId?: string;
+        teamName?: string;
+      }>({
+        action: "playerJoin",
+        code: stored.code,
+        playerName: stored.playerName,
+        mode: "joinTeam",
+        teamId: stored.teamId,
+        teamName: stored.teamName,
+        playerId: stored.playerId,
+      })
+        .then((res) => {
+          if (!res.state || !res.playerId) return;
+          const session = {
+            playerId: res.playerId,
+            teamId: res.teamId!,
+            teamName: res.teamName!,
+          };
+          setPlayer(session);
+          setState(res.state);
+          setWatch({
+            code: res.state.code,
+            view: "public",
+            playerId: session.playerId,
+          });
+        })
+        .catch(() => undefined);
+    }
+  }, [connected]);
 
   const withHostToken = useCallback(() => {
     const hostToken = getHostToken();
     if (!hostToken) throw new Error("Host session expired — enter the PIN again");
     return hostToken;
   }, []);
+
+  const hostAction = useCallback(
+    async <T,>(action: string, extra: Record<string, unknown> = {}) => {
+      setError(null);
+      const data = await postAction<
+        T & { state?: PublicGameState; adminState?: AdminGameState }
+      >({
+        action,
+        hostToken: withHostToken(),
+        code: getRememberedAdminCode() || undefined,
+        ...extra,
+      });
+      if (data.adminState) {
+        setAdminState(data.adminState);
+        setState(data.adminState);
+        rememberAdminCode(data.adminState.code);
+        setWatch({ code: data.adminState.code, view: "admin" });
+      } else if (data.state) {
+        setState(data.state);
+      }
+      return data;
+    },
+    [withHostToken],
+  );
 
   const value = useMemo<GameContextValue>(
     () => ({
@@ -311,40 +307,37 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setError,
       setPlayer,
       hostAuth: (pin) =>
-        emitAck<{ ok: true; hostToken: string }>(SOCKET_EVENTS.HOST_AUTH, {
-          pin,
-        }).then((res) => {
-          unlockHostSession(res.hostToken);
-          return res.hostToken;
-        }),
+        postAction<{ hostToken: string }>({ action: "hostAuth", pin }).then(
+          (res) => {
+            unlockHostSession(res.hostToken);
+            setError(null);
+            return res.hostToken;
+          },
+        ),
       createGame: (input) =>
-        emitAck<{ ok: true; state: AdminGameState }>(SOCKET_EVENTS.CREATE_GAME, {
+        hostAction<{ adminState: AdminGameState }>("createGame", {
           ...input,
-          hostToken: withHostToken(),
         }).then((res) => {
-          setAdminState(res.state);
-          setState(res.state);
-          rememberAdminCode(res.state.code);
-          return res.state;
+          if (!res.adminState) throw new Error("Could not create night");
+          return res.adminState;
         }),
       adminJoin: (code) =>
-        emitAck<{ ok: true; state: AdminGameState }>(SOCKET_EVENTS.ADMIN_JOIN, {
-          hostToken: withHostToken(),
-          code,
-        }).then((res) => {
-          setAdminState(res.state);
-          setState(res.state);
-          rememberAdminCode(res.state.code);
-          return res.state;
-        }),
+        hostAction<{ adminState: AdminGameState }>("adminJoin", { code }).then(
+          (res) => {
+            if (!res.adminState) {
+              throw new Error("No trivia night is running — start a new one");
+            }
+            return res.adminState;
+          },
+        ),
       listNights: (query) =>
-        emitAck<{
-          ok: true;
+        postAction<{
           nights: NightRecord[];
           hasCurrent: boolean;
           currentCode: string | null;
           currentTitle: string | null;
-        }>(SOCKET_EVENTS.LIST_NIGHTS, {
+        }>({
+          action: "listNights",
           hostToken: withHostToken(),
           query,
         }).then((res) => ({
@@ -354,35 +347,38 @@ export function GameProvider({ children }: { children: ReactNode }) {
           currentTitle: res.currentTitle,
         })),
       displayJoin: (code) =>
-        emitAck<{ ok: true; state: PublicGameState }>(
-          SOCKET_EVENTS.DISPLAY_JOIN,
-          { code },
-        ).then((res) => {
+        postAction<{ state: PublicGameState }>({
+          action: "displayJoin",
+          code,
+        }).then((res) => {
           setState(res.state);
           rememberDisplayCode(res.state.code);
+          setWatch({ code: res.state.code, view: "public" });
           return res.state;
         }),
       peekLobby: (code) =>
-        emitAck<{
-          ok: true;
+        postAction<{
           code: string;
           title: string;
           phase: string;
           teams: Team[];
-        }>(SOCKET_EVENTS.PEEK_LOBBY, { code }).then((res) => ({
+        }>({ action: "peekLobby", code }).then((res) => ({
           code: res.code,
           title: res.title,
           phase: res.phase,
           teams: res.teams,
         })),
       playerJoin: (payload) =>
-        emitAck<{
-          ok: true;
+        postAction<{
           state: PublicGameState;
           playerId: string;
           teamId: string;
           teamName: string;
-        }>(SOCKET_EVENTS.PLAYER_JOIN, payload).then((res) => {
+        }>({
+          action: "playerJoin",
+          ...payload,
+          playerId: readStoredPlayer()?.playerId,
+        }).then((res) => {
           const session = {
             playerId: res.playerId,
             teamId: res.teamId,
@@ -390,24 +386,52 @@ export function GameProvider({ children }: { children: ReactNode }) {
           };
           setState(res.state);
           setPlayer(session);
+          setWatch({
+            code: res.state.code,
+            view: "public",
+            playerId: session.playerId,
+          });
           return { ...session, state: res.state };
         }),
-      startQuestion: () => emitAck(SOCKET_EVENTS.START_QUESTION),
-      forceLock: () => emitAck(SOCKET_EVENTS.FORCE_LOCK),
-      pauseTimer: () => emitAck(SOCKET_EVENTS.PAUSE_TIMER),
-      resumeTimer: () => emitAck(SOCKET_EVENTS.RESUME_TIMER),
-      restartTimer: () => emitAck(SOCKET_EVENTS.RESTART_TIMER),
-      nextQuestion: () => emitAck(SOCKET_EVENTS.NEXT),
-      submitAnswer: (optionIndex) =>
-        emitAck(SOCKET_EVENTS.SUBMIT_ANSWER, { optionIndex }),
-      kickTeam: (teamId) => emitAck(SOCKET_EVENTS.KICK_TEAM, { teamId }),
-      adjustScore: (teamId, delta) =>
-        emitAck(SOCKET_EVENTS.ADJUST_SCORE, { teamId, delta }),
+      startQuestion: () => hostAction("startQuestion"),
+      forceLock: () => hostAction("forceLock"),
+      pauseTimer: () => hostAction("pauseTimer"),
+      resumeTimer: () => hostAction("resumeTimer"),
+      restartTimer: () => hostAction("restartTimer"),
+      nextQuestion: () => hostAction("nextQuestion"),
+      submitAnswer: (optionIndex) => {
+        const stored = readStoredPlayer();
+        const code = stored?.code || state?.code;
+        const playerId = player?.playerId || stored?.playerId;
+        if (!code || !playerId) {
+          return Promise.reject(new Error("Join a team first"));
+        }
+        setError(null);
+        return postAction<{ state?: PublicGameState }>({
+          action: "submitAnswer",
+          code,
+          playerId,
+          optionIndex,
+        }).then((res) => {
+          if (res.state) setState(res.state);
+          return res;
+        });
+      },
+      kickTeam: (teamId) => hostAction("kickTeam", { teamId }),
+      adjustScore: (teamId, delta) => hostAction("adjustScore", { teamId, delta }),
       setQuestions: (questions, timeLimitSec) =>
-        emitAck(SOCKET_EVENTS.SET_QUESTIONS, { questions, timeLimitSec }),
-      endGame: () => emitAck(SOCKET_EVENTS.END_GAME),
+        hostAction("setQuestions", { questions, timeLimitSec }),
+      endGame: () => hostAction("endGame"),
     }),
-    [connected, state, adminState, player, error, emitAck, withHostToken],
+    [
+      connected,
+      state,
+      adminState,
+      player,
+      error,
+      hostAction,
+      withHostToken,
+    ],
   );
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

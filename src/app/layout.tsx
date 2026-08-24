@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Figtree, Outfit } from "next/font/google";
+import { BackButton } from "@/components/BackButton";
 import { Providers } from "@/components/Providers";
 import "./globals.css";
 
@@ -23,7 +24,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${body.variable} ${display.variable} h-full`}>
       <body className="min-h-full antialiased">
-        <Providers>{children}</Providers>
+        <Providers>
+          <div className="flex min-h-full flex-col">
+            <div className="sticky top-0 z-40 flex items-center px-3 py-2">
+              <BackButton />
+            </div>
+            <div className="flex-1">{children}</div>
+          </div>
+        </Providers>
       </body>
     </html>
   );

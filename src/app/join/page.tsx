@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import type { Team } from "@/lib/game/types";
@@ -95,10 +94,7 @@ function JoinInner() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-6 px-6 py-12">
       <div>
-        <Link href="/" className="text-sm text-[var(--muted)]">
-          ← Home
-        </Link>
-        <h1 className="font-display mt-4 text-4xl">Join the night</h1>
+        <h1 className="font-display text-4xl">Join the night</h1>
         <p className="mt-2 text-[var(--muted)]">
           Enter the code from the TV, then play as a team or solo.
         </p>
