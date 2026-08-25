@@ -1,6 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import { useLocale } from "@/components/LocaleProvider";
 import type { NightRecord } from "@/lib/game/types";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
 import { titleFromScheduledDate, toDateInputValue } from "@/lib/game/dateUtils";
@@ -17,6 +19,7 @@ export function HostNightModal({
   onCreate,
   onResume,
   onResumeNight,
+  onDeleteNight,
   onLoadHistory,
 }: {
   open: boolean;
@@ -27,12 +30,15 @@ export function HostNightModal({
   onCreate: (input: { scheduledDate: string }) => Promise<void>;
   onResume: () => Promise<void>;
   onResumeNight?: (code: string) => Promise<void>;
+  onDeleteNight?: (nightId: string) => Promise<void>;
   onLoadHistory: (query: string) => Promise<{
     nights: NightRecord[];
     hasCurrent: boolean;
     currentTitle: string | null;
   }>;
 }) {
+  const router = useRouter();
+  const { locale, t } = useLocale();
   const [tab, setTab] = useState<Tab>("create");
   const [scheduledDate, setScheduledDate] = useState(toDateInputValue);
   const [nights, setNights] = useState<NightRecord[]>([]);
@@ -41,13 +47,18 @@ export function HostNightModal({
   const [localError, setLocalError] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
 
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "create", label: t("hostModal.create") },
+    { id: "resume", label: t("hostModal.resume") },
+    { id: "history", label: t("hostModal.pastNights") },
+  ];
+
   useEffect(() => {
     if (!open || !connected) return;
     onLoadHistory("")
       .then((res) => {
         setHasCurrent(res.hasCurrent);
         setCurrentTitle(res.currentTitle);
-        if (res.hasCurrent) setTab("resume");
       })
       .catch(() => undefined);
   }, [open, connected, onLoadHistory]);
@@ -61,14 +72,14 @@ export function HostNightModal({
         setCurrentTitle(res.currentTitle);
         setLocalError(null);
       })
-      .catch((err: unknown) => {
-        setLocalError(err instanceof Error ? err.message : "Could not load history");
+      .catch(() => {
+        setLocalError(t("hostModal.couldNotLoadHistory"));
       });
-  }, [open, tab, connected, onLoadHistory]);
+  }, [open, tab, connected, onLoadHistory, t]);
 
   if (!open) return null;
 
-  const previewTitle = titleFromScheduledDate(scheduledDate);
+  const previewTitle = titleFromScheduledDate(scheduledDate, locale);
 
   function submitCreate() {
     if (hasCurrent && !confirmReplace) {
@@ -79,7 +90,7 @@ export function HostNightModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4">
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -87,23 +98,26 @@ export function HostNightModal({
         className="card-panel flex h-[min(640px,90dvh)] w-full max-w-4xl flex-col overflow-hidden shadow-2xl"
       >
         <div className="shrink-0 border-b border-[var(--line)] px-6 py-4">
-          {breadcrumbs ? <div className="mb-3">{breadcrumbs}</div> : null}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            {breadcrumbs ? <div>{breadcrumbs}</div> : <span />}
+            <button
+              type="button"
+              className="btn btn-ghost py-2 text-sm"
+              onClick={() => router.push("/")}
+            >
+              {t("common.mainMenu")}
+            </button>
+          </div>
           <p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">
-            La Antesala
+            {t("home.brand")}
           </p>
           <h2 id="host-night-title" className="font-display mt-1 text-3xl">
-            Set up the night
+            {t("hostModal.title")}
           </h2>
         </div>
 
         <div className="flex shrink-0 gap-1 border-b border-[var(--line)] px-4 pt-2">
-          {(
-            [
-              ["create", "Create"],
-              ["resume", "Resume"],
-              ["history", "Past nights"],
-            ] as const
-          ).map(([id, label]) => (
+          {tabs.map(({ id, label }) => (
             <button
               key={id}
               type="button"
@@ -132,7 +146,9 @@ export function HostNightModal({
               }}
             >
               <label className="space-y-2">
-                <span className="text-sm text-[var(--muted)]">Trivia night date</span>
+                <span className="text-sm text-[var(--muted)]">
+                  {t("hostModal.nightDate")}
+                </span>
                 <input
                   className="input"
                   type="date"
@@ -147,20 +163,18 @@ export function HostNightModal({
               </label>
               <p className="text-sm text-[var(--text)]">{previewTitle}</p>
               <p className="text-sm text-[var(--muted)]">
-                Pick the night you&apos;re hosting (or prep for). Starts with{" "}
-                {SAMPLE_QUESTIONS.length} sample questions — edit them in the lobby
-                before guests arrive.
+                {t("hostModal.createHint", { count: SAMPLE_QUESTIONS.length })}
               </p>
               {hasCurrent && (
-                <p className="rounded-xl bg-[rgba(255,107,74,0.12)] px-4 py-3 text-sm text-[var(--danger)]">
-                  There&apos;s already an unfinished night
-                  {currentTitle ? ` (${currentTitle})` : ""}. Creating a new one
-                  replaces it as the live night.
+                <p className="danger-soft-panel rounded-xl px-4 py-3 text-sm text-[var(--danger)]">
+                  {t("hostModal.unfinishedWarning", {
+                    title: currentTitle ?? "",
+                  })}
                 </p>
               )}
               {confirmReplace && (
                 <p className="text-sm text-[var(--accent)]">
-                  Tap Create again to confirm and replace the unfinished night.
+                  {t("hostModal.confirmReplace")}
                 </p>
               )}
               {(error || localError) && (
@@ -171,7 +185,9 @@ export function HostNightModal({
                 className="btn btn-primary"
                 disabled={busy || !connected || !scheduledDate}
               >
-                {confirmReplace ? "Yes, create new night" : "Create trivia night"}
+                {confirmReplace
+                  ? t("hostModal.confirmCreate")
+                  : t("hostModal.createNight")}
               </button>
             </form>
           )}
@@ -187,21 +203,17 @@ export function HostNightModal({
               {hasCurrent ? (
                 <div className="space-y-2">
                   <p className="text-[var(--muted)]">
-                    Unfinished night ready to reopen:{" "}
+                    {t("hostModal.resumeReady")}{" "}
                     <span className="font-semibold text-[var(--text)]">
                       {currentTitle}
                     </span>
                   </p>
                   <p className="text-sm text-[var(--muted)]">
-                    Includes nights that were still open when the server last
-                    restarted.
+                    {t("hostModal.resumeHint")}
                   </p>
                 </div>
               ) : (
-                <p className="text-[var(--muted)]">
-                  No unfinished night found. Create one instead, or check Past
-                  nights.
-                </p>
+                <p className="text-[var(--muted)]">{t("hostModal.noUnfinished")}</p>
               )}
               {(error || localError) && (
                 <p className="text-sm text-[var(--danger)]">{error || localError}</p>
@@ -211,7 +223,7 @@ export function HostNightModal({
                 className="btn btn-primary"
                 disabled={busy || !connected || !hasCurrent}
               >
-                Enter current night
+                {t("hostModal.enterNight")}
               </button>
             </form>
           )}
@@ -226,16 +238,29 @@ export function HostNightModal({
               <div className="min-h-0 flex-1 overflow-hidden">
                 <PastNightsCalendar
                   nights={nights}
+                  busy={busy}
                   onResumeNight={
                     onResumeNight
                       ? (code) => {
-                          onResumeNight(code).catch((err: unknown) => {
-                            setLocalError(
-                              err instanceof Error
-                                ? err.message
-                                : "Could not resume night",
-                            );
+                          onResumeNight(code).catch(() => {
+                            setLocalError(t("hostModal.couldNotResume"));
                           });
+                        }
+                      : undefined
+                  }
+                  onDeleteNight={
+                    onDeleteNight
+                      ? async (nightId) => {
+                          try {
+                            await onDeleteNight(nightId);
+                            const res = await onLoadHistory("");
+                            setNights(res.nights);
+                            setHasCurrent(res.hasCurrent);
+                            setCurrentTitle(res.currentTitle);
+                            setLocalError(null);
+                          } catch {
+                            setLocalError(t("hostModal.couldNotDelete"));
+                          }
                         }
                       : undefined
                   }

@@ -35,6 +35,11 @@ export function rememberAdminCode(code: string) {
   sessionStorage.setItem(ADMIN_CODE_KEY, code.toUpperCase());
 }
 
+export function clearRememberedAdminCode() {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(ADMIN_CODE_KEY);
+}
+
 export function getRememberedAdminCode() {
   if (typeof window === "undefined") return null;
   return sessionStorage.getItem(ADMIN_CODE_KEY);

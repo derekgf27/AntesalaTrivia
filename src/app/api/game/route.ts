@@ -271,6 +271,18 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await afterMutate(code));
       }
 
+      case "deleteNight": {
+        await requireHostToken(String(body.hostToken || ""));
+        const nightId = String(body.nightId || "").trim();
+        if (!nightId) throw new Error("Missing night id");
+        const result = await gameStore.deleteNight(nightId);
+        return NextResponse.json({
+          ok: true,
+          deleted: result.deleted,
+          wasCurrent: result.wasCurrent,
+        });
+      }
+
       default:
         throw new Error("Unknown action");
     }

@@ -2,14 +2,16 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
+import { useLocale } from "@/components/LocaleProvider";
 import type { Team } from "@/lib/game/types";
 import { PLAYER_SESSION_KEY } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
 
-function JoinInner() {
+function JoinForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const presetCode = searchParams.get("code") || "";
+  const { t } = useLocale();
 
   const { connected, playerJoin, peekLobby, error, setError } = useGameState();
   const [code, setCode] = useState(presetCode.toUpperCase());
@@ -22,6 +24,16 @@ function JoinInner() {
   const [lobbyTeams, setLobbyTeams] = useState<Team[]>([]);
   const [peeked, setPeeked] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const modeOptions = useMemo(
+    () =>
+      [
+        ["createTeam", t("join.newTeam")] as const,
+        ["joinTeam", t("join.joinTeam")] as const,
+        ["solo", t("common.solo")] as const,
+      ],
+    [t],
+  );
 
   const canSubmit = useMemo(() => {
     if (!code || !playerName.trim()) return false;
@@ -44,14 +56,14 @@ function JoinInner() {
           setPeeked(true);
           setError(null);
           setTeamId((prev) =>
-            prev && res.teams.some((t) => t.id === prev) ? prev : "",
+            prev && res.teams.some((team) => team.id === prev) ? prev : "",
           );
         })
-        .catch((err: unknown) => {
+        .catch(() => {
           if (cancelled) return;
           setLobbyTeams([]);
           setPeeked(true);
-          setError(err instanceof Error ? err.message : "Could not load teams");
+          setError(t("common.couldNotLoadTeams"));
         });
     }, 350);
 
@@ -59,7 +71,7 @@ function JoinInner() {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [code, mode, connected, peekLobby, setError]);
+  }, [code, mode, connected, peekLobby, setError, t]);
 
   async function handleJoin(e: React.FormEvent) {
     e.preventDefault();
@@ -94,17 +106,15 @@ function JoinInner() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-6 px-6 py-12">
       <div>
-        <h1 className="font-display text-4xl">Join the night</h1>
-        <p className="mt-2 text-[var(--muted)]">
-          Enter the code from the TV, then play as a team or solo.
-        </p>
+        <h1 className="font-display text-4xl">{t("join.title")}</h1>
+        <p className="mt-2 text-[var(--muted)]">{t("join.subtitle")}</p>
       </div>
 
       <form className="card-panel flex flex-col gap-4 p-5" onSubmit={handleJoin}>
         <label className="space-y-2">
-          <span className="text-sm text-[var(--muted)]">Lobby code</span>
+          <span className="text-sm text-[var(--muted)]">{t("join.lobbyCode")}</span>
           <input
-            className="input uppercase tracking-[0.25em] text-center text-2xl"
+            className="input text-center text-2xl uppercase tracking-[0.25em]"
             value={code}
             maxLength={6}
             required
@@ -118,7 +128,7 @@ function JoinInner() {
         </label>
 
         <label className="space-y-2">
-          <span className="text-sm text-[var(--muted)]">Your name</span>
+          <span className="text-sm text-[var(--muted)]">{t("join.yourName")}</span>
           <input
             className="input"
             value={playerName}
@@ -129,13 +139,7 @@ function JoinInner() {
         </label>
 
         <div className="grid grid-cols-3 gap-2">
-          {(
-            [
-              ["createTeam", "New team"],
-              ["joinTeam", "Join team"],
-              ["solo", "Solo"],
-            ] as const
-          ).map(([value, label]) => (
+          {modeOptions.map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -149,12 +153,11 @@ function JoinInner() {
 
         {mode === "createTeam" && (
           <label className="space-y-2">
-            <span className="text-sm text-[var(--muted)]">Team name</span>
+            <span className="text-sm text-[var(--muted)]">{t("join.teamName")}</span>
             <input
               className="input"
               value={teamName}
               maxLength={28}
-              placeholder="Table 4 Legends"
               onChange={(e) => setTeamName(e.target.value)}
             />
           </label>
@@ -163,12 +166,10 @@ function JoinInner() {
         {mode === "joinTeam" && (
           <div className="space-y-3">
             {!peeked && code.length >= 4 && (
-              <p className="text-sm text-[var(--muted)]">Loading teams…</p>
+              <p className="text-sm text-[var(--muted)]">{t("join.loadingTeams")}</p>
             )}
             {lobbyTeams.length === 0 && peeked && (
-              <p className="text-sm text-[var(--muted)]">
-                No open teams yet — create one instead.
-              </p>
+              <p className="text-sm text-[var(--muted)]">{t("join.noTeams")}</p>
             )}
             <div className="grid gap-2">
               {lobbyTeams.map((team) => (
@@ -194,28 +195,32 @@ function JoinInner() {
           className="btn btn-primary"
           disabled={!connected || busy || !canSubmit}
         >
-          Enter lobby
+          {t("join.enterLobby")}
         </button>
       </form>
 
       {error && <p className="text-[var(--danger)]">{error}</p>}
       <p className="text-sm text-[var(--muted)]">
-        Status: {connected ? "online" : "connecting…"}
+        {t("join.status", {
+          status: connected ? t("common.online") : t("common.connecting"),
+        })}
       </p>
     </main>
   );
 }
 
 export default function JoinPage() {
+  const { locale, t } = useLocale();
+
   return (
     <Suspense
       fallback={
         <main className="grid min-h-dvh place-items-center text-[var(--muted)]">
-          Loading…
+          {t("common.loading")}
         </main>
       }
     >
-      <JoinInner />
+      <JoinForm key={locale} />
     </Suspense>
   );
 }

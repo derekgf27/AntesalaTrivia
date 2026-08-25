@@ -97,11 +97,22 @@ export async function getRoomData<T>(code: string): Promise<T | null> {
 
 export async function setRoomData(code: string, data: unknown) {
   const c = code.toUpperCase().trim();
+  if (!c) return;
   if (!redisEnabled()) {
     memory().rooms.set(c, data);
     return;
   }
   await redis().set(`room:${c}`, data);
+}
+
+export async function deleteRoomData(code: string) {
+  const c = code.toUpperCase().trim();
+  if (!c) return;
+  if (!redisEnabled()) {
+    memory().rooms.delete(c);
+    return;
+  }
+  await redis().del(`room:${c}`);
 }
 
 export async function getCurrentCode(): Promise<string | null> {

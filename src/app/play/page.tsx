@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale } from "@/components/LocaleProvider";
 import { Leaderboard } from "@/components/Leaderboard";
 import { TimerRing } from "@/components/TimerRing";
 import { PLAYER_SESSION_KEY } from "@/lib/hostSession";
@@ -16,6 +17,7 @@ type StoredPlayer = {
 };
 
 export default function PlayPage() {
+  const { t } = useLocale();
   const { connected, state, player, error, submitAnswer } = useGameState();
   const [stored, setStored] = useState<StoredPlayer | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -38,7 +40,7 @@ export default function PlayPage() {
   const teamId = player?.teamId || stored?.teamId;
   const teamName = player?.teamName || stored?.teamName;
   const answered = Boolean(teamId && state?.answeredTeamIds.includes(teamId));
-  const myTeam = state?.teams.find((t) => t.id === teamId);
+  const myTeam = state?.teams.find((team) => team.id === teamId);
   const scoredThisRound = Boolean(
     teamId && state?.reveal?.awarded.some((a) => a.teamId === teamId),
   );
@@ -46,10 +48,10 @@ export default function PlayPage() {
   if (!stored && !player) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-4 px-6">
-        <h1 className="font-display text-3xl font-bold">No active session</h1>
-        <p className="text-[var(--muted)]">Join a lobby first.</p>
+        <h1 className="font-display text-3xl font-bold">{t("play.noSession")}</h1>
+        <p className="text-[var(--muted)]">{t("play.joinFirst")}</p>
         <Link href="/join" className="btn btn-primary text-center">
-          Join
+          {t("play.join")}
         </Link>
       </main>
     );
@@ -59,8 +61,10 @@ export default function PlayPage() {
     return (
       <main className="grid min-h-dvh place-items-center text-[var(--muted)]">
         {connected
-          ? `Connecting${stored ? ` to ${stored.code}` : ""}…`
-          : "Reconnecting…"}
+          ? stored
+            ? t("play.connectingTo", { code: stored.code })
+            : t("play.connecting")
+          : t("play.reconnecting")}
       </main>
     );
   }
@@ -77,7 +81,11 @@ export default function PlayPage() {
           </p>
           <h1 className="font-display text-2xl font-bold">{teamName}</h1>
           <p className="text-sm text-[var(--muted)]">
-            {myTeam != null ? `${myTeam.score} pt${myTeam.score === 1 ? "" : "s"}` : "Playing along"}
+            {myTeam != null
+              ? myTeam.score === 1
+                ? t("play.points", { count: myTeam.score })
+                : t("play.pointsPlural", { count: myTeam.score })
+              : t("play.playingAlong")}
           </p>
         </div>
         {state.phase === "question" && q && (
@@ -90,14 +98,12 @@ export default function PlayPage() {
         )}
       </header>
 
-      {error && <p className="text-[var(--danger)] text-sm">{error}</p>}
+      {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
 
       {state.phase === "lobby" && (
         <section className="rounded-3xl bg-[var(--navy)] px-5 py-6 ring-1 ring-[var(--line)]">
-          <h2 className="font-display text-2xl font-bold">You&apos;re in</h2>
-          <p className="mt-2 text-[var(--muted)]">
-            Hang tight — the host will start the next question.
-          </p>
+          <h2 className="font-display text-2xl font-bold">{t("play.youreIn")}</h2>
+          <p className="mt-2 text-[var(--muted)]">{t("play.lobbyWait")}</p>
         </section>
       )}
 
@@ -146,10 +152,10 @@ export default function PlayPage() {
           </div>
           <p className="text-sm text-[var(--muted)]">
             {!player
-              ? "Reconnecting your seat…"
+              ? t("play.reconnectSeat")
               : answered
-                ? "Answer locked in for your team — you can still change it until time runs out."
-                : "Pick an answer for your team."}
+                ? t("play.answerLocked")
+                : t("play.pickAnswer")}
           </p>
         </section>
       )}
@@ -157,11 +163,9 @@ export default function PlayPage() {
       {state.phase === "locked" && q && (
         <section className="space-y-4">
           <p className="font-display text-xl font-bold uppercase tracking-[0.12em] text-[var(--accent)]">
-            Answers locked
+            {t("play.answersLocked")}
           </p>
-          <h2 className="font-display text-2xl font-bold leading-tight">
-            {q.text}
-          </h2>
+          <h2 className="font-display text-2xl font-bold leading-tight">{q.text}</h2>
           <ul className="grid gap-3">
             {q.options.map((opt, i) => (
               <li
@@ -179,9 +183,7 @@ export default function PlayPage() {
               </li>
             ))}
           </ul>
-          <p className="text-[var(--muted)]">
-            Time&apos;s up — revealing the correct answer…
-          </p>
+          <p className="text-[var(--muted)]">{t("play.timesUp")}</p>
         </section>
       )}
 
@@ -195,18 +197,22 @@ export default function PlayPage() {
             }`}
           >
             <p className="font-display text-2xl font-bold">
-              {scoredThisRound ? "Correct! +1" : answered || selected != null ? "Missed" : "No answer"}
+              {scoredThisRound
+                ? t("play.correct")
+                : answered || selected != null
+                  ? t("play.missed")
+                  : t("play.noAnswer")}
             </p>
             <p className="mt-1 text-sm text-[var(--muted)]">
               {myTeam != null
-                ? `Your score: ${myTeam.score}`
-                : "Waiting for the host…"}
+                ? t("play.yourScore", { score: myTeam.score })
+                : t("play.waitingHost")}
             </p>
           </div>
           {correctIndex != null && (
             <div className="rounded-3xl bg-[var(--accent-soft)] px-5 py-4 ring-2 ring-[var(--accent)]">
               <p className="text-xs uppercase tracking-[0.25em] text-[var(--accent)]">
-                Correct answer
+                {t("play.correctAnswer")}
               </p>
               <p className="font-display mt-1 text-2xl font-bold">
                 <span className="text-[var(--accent)]">
@@ -217,9 +223,7 @@ export default function PlayPage() {
               </p>
             </div>
           )}
-          <h2 className="font-display text-2xl font-bold leading-tight">
-            {q.text}
-          </h2>
+          <h2 className="font-display text-2xl font-bold leading-tight">{q.text}</h2>
           <ul className="grid gap-3">
             {q.options.map((opt, i) => {
               const showCorrect = correctIndex === i;
@@ -231,7 +235,7 @@ export default function PlayPage() {
                     showCorrect
                       ? "bg-[var(--cream)] ring-2 ring-[var(--accent)]"
                       : wasMine
-                        ? "bg-[var(--cream)] ring-2 ring-[var(--danger)] opacity-80"
+                        ? "bg-[var(--cream)] opacity-80 ring-2 ring-[var(--danger)]"
                         : "bg-[var(--cream)] opacity-45"
                   }`}
                 >
@@ -243,22 +247,30 @@ export default function PlayPage() {
               );
             })}
           </ul>
-          <p className="text-[var(--muted)]">Waiting for the host to continue…</p>
+          <p className="text-[var(--muted)]">{t("play.waitingContinue")}</p>
         </section>
       )}
 
       {state.phase === "finished" && (
         <section className="space-y-5">
           <div className="rounded-3xl bg-[var(--navy)] px-5 py-6 ring-1 ring-[var(--line)]">
-            <h2 className="font-display text-3xl font-bold">That&apos;s a wrap</h2>
+            <h2 className="font-display text-3xl font-bold">{t("play.wrap")}</h2>
             <p className="mt-2 text-[var(--muted)]">
               {myTeam != null
-                ? `${teamName} finished with ${myTeam.score} point${myTeam.score === 1 ? "" : "s"}.`
-                : "Thanks for playing."}
+                ? myTeam.score === 1
+                  ? t("play.finishedPoints", {
+                      name: teamName ?? "",
+                      count: myTeam.score,
+                    })
+                  : t("play.finishedPointsPlural", {
+                      name: teamName ?? "",
+                      count: myTeam.score,
+                    })
+                : t("play.thanks")}
             </p>
           </div>
           <div className="card-panel p-5">
-            <h3 className="font-display mb-3 text-2xl">Final board</h3>
+            <h3 className="font-display mb-3 text-2xl">{t("play.finalBoard")}</h3>
             <Leaderboard teams={state.teams} highlightTeamId={teamId} />
           </div>
         </section>

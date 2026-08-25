@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useLocale } from "@/components/LocaleProvider";
+import { localeTag } from "@/lib/i18n/locale";
 import type { NightRecord } from "@/lib/game/types";
 
 function startOfMonth(date: Date) {
@@ -19,17 +21,23 @@ function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
-
 export function PastNightsCalendar({
   nights,
+  busy,
   onResumeNight,
+  onDeleteNight,
 }: {
   nights: NightRecord[];
+  busy?: boolean;
   onResumeNight?: (code: string) => void;
+  onDeleteNight?: (nightId: string) => Promise<void> | void;
 }) {
+  const { locale, t } = useLocale();
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const [selected, setSelected] = useState<Date | null>(new Date());
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const weekdays = t("pastNights.weekdays").split(",");
+  const dateLocale = localeTag(locale);
 
   const nightsByDay = useMemo(() => {
     const map = new Map<string, NightRecord[]>();
@@ -63,7 +71,7 @@ export function PastNightsCalendar({
     ? nightsByDay.get(dateKey(selected)) ?? []
     : [];
 
-  const monthLabel = cursor.toLocaleDateString(undefined, {
+  const monthLabel = cursor.toLocaleDateString(dateLocale, {
     month: "long",
     year: "numeric",
   });
@@ -80,7 +88,7 @@ export function PastNightsCalendar({
             onClick={() =>
               setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))
             }
-            aria-label="Previous month"
+            aria-label={t("pastNights.prevMonth")}
           >
             ←
           </button>
@@ -91,14 +99,14 @@ export function PastNightsCalendar({
             onClick={() =>
               setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))
             }
-            aria-label="Next month"
+            aria-label={t("pastNights.nextMonth")}
           >
             →
           </button>
         </div>
 
         <div className="grid grid-cols-7 gap-1 text-center text-xs text-[var(--muted)]">
-          {WEEKDAYS.map((d, i) => (
+          {weekdays.map((d, i) => (
             <div key={`${d}-${i}`} className="py-1 font-semibold">
               {d}
             </div>
@@ -115,7 +123,10 @@ export function PastNightsCalendar({
                 key={key + String(inMonth)}
                 type="button"
                 disabled={!inMonth}
-                onClick={() => setSelected(date)}
+                onClick={() => {
+                  setSelected(date);
+                  setConfirmId(null);
+                }}
                 className={`relative flex h-10 flex-col items-center justify-center rounded-lg text-sm transition sm:h-11 ${
                   !inMonth
                     ? "opacity-20"
@@ -143,46 +154,97 @@ export function PastNightsCalendar({
       <div className="flex min-h-0 flex-col rounded-xl bg-[var(--surface-2)] p-4">
         <p className="mb-3 shrink-0 text-xs uppercase tracking-[0.15em] text-[var(--muted)]">
           {selected
-            ? selected.toLocaleDateString(undefined, {
+            ? selected.toLocaleDateString(dateLocale, {
                 weekday: "short",
                 month: "short",
                 day: "numeric",
                 year: "numeric",
               })
-            : "Select a day"}
+            : t("pastNights.selectDay")}
         </p>
         {selectedNights.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No trivia nights this day.</p>
+          <p className="text-sm text-[var(--muted)]">{t("pastNights.noNights")}</p>
         ) : (
           <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {selectedNights.map((night) => {
               const unfinished =
                 !night.finishedAt && night.phase !== "finished";
+              const confirming = confirmId === night.id;
               return (
                 <li key={night.id} className="rounded-lg bg-[var(--surface)] px-3 py-2">
                   <p className="font-semibold">{night.title}</p>
                   <p className="text-xs text-[var(--muted)]">
-                    {new Date(night.createdAt).toLocaleTimeString(undefined, {
+                    {new Date(night.createdAt).toLocaleTimeString(dateLocale, {
                       hour: "numeric",
                       minute: "2-digit",
                     })}{" "}
-                    · code {night.code} · {night.teams.length} teams ·{" "}
-                    {unfinished ? "in progress" : night.phase}
+                    {t("pastNights.codeTeams", {
+                      code: night.code,
+                      count: night.teams.length,
+                    })}
+                    {unfinished ? t("pastNights.inProgress") : night.phase}
                   </p>
                   {night.teams[0] && (
                     <p className="mt-1 text-sm text-[var(--accent)]">
-                      Top: {night.teams[0].name} ({night.teams[0].score})
+                      {t("pastNights.top", {
+                        name: night.teams[0].name,
+                        score: night.teams[0].score,
+                      })}
                     </p>
                   )}
-                  {unfinished && onResumeNight && (
-                    <button
-                      type="button"
-                      className="btn btn-primary mt-3 w-full py-2 text-sm"
-                      onClick={() => onResumeNight(night.code)}
-                    >
-                      Resume this night
-                    </button>
-                  )}
+                  <div className="mt-3 flex flex-col gap-2">
+                    {unfinished && onResumeNight && (
+                      <button
+                        type="button"
+                        className="btn btn-primary w-full py-2 text-sm"
+                        disabled={busy}
+                        onClick={() => onResumeNight(night.code)}
+                      >
+                        {t("pastNights.resume")}
+                      </button>
+                    )}
+                    {onDeleteNight &&
+                      (confirming ? (
+                        <div className="danger-soft-panel space-y-2 rounded-lg p-2">
+                          <p className="text-xs text-[var(--danger)]">
+                            {t("pastNights.deleteConfirm", {
+                              live: unfinished ? t("pastNights.deleteLive") : "",
+                            })}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="btn btn-danger py-2 text-sm"
+                              disabled={busy}
+                              onClick={() => {
+                                void Promise.resolve(onDeleteNight(night.id)).finally(
+                                  () => setConfirmId(null),
+                                );
+                              }}
+                            >
+                              {t("pastNights.yesDelete")}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost py-2 text-sm"
+                              disabled={busy}
+                              onClick={() => setConfirmId(null)}
+                            >
+                              {t("common.cancel")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-ghost w-full py-2 text-sm text-[var(--danger)]"
+                          disabled={busy}
+                          onClick={() => setConfirmId(night.id)}
+                        >
+                          {t("pastNights.deleteNight")}
+                        </button>
+                      ))}
+                  </div>
                 </li>
               );
             })}

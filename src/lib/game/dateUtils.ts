@@ -12,11 +12,17 @@ export function parseDateInput(value: string): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 
-export function titleFromScheduledDate(scheduledDate: string): string {
+export function titleFromScheduledDate(
+  scheduledDate: string,
+  locale: "en" | "es" = "en",
+): string {
   const d = parseDateInput(scheduledDate);
-  return `Trivia Night · ${d.toLocaleDateString(undefined, {
+  const formatted = d.toLocaleDateString(locale === "es" ? "es-ES" : "en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  })}`;
+  });
+  return locale === "es"
+    ? `Noche de trivia · ${formatted}`
+    : `Trivia Night · ${formatted}`;
 }

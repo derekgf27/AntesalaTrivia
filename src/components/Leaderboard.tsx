@@ -1,5 +1,6 @@
 "use client";
 
+import { useLocale } from "@/components/LocaleProvider";
 import type { Team } from "@/lib/game/types";
 
 export function Leaderboard({
@@ -11,9 +12,11 @@ export function Leaderboard({
   highlightTeamId?: string;
   compact?: boolean;
 }) {
+  const { t } = useLocale();
+
   if (teams.length === 0) {
     return (
-      <p className="text-[var(--muted)] text-sm">No teams yet — waiting for players.</p>
+      <p className="text-sm text-[var(--muted)]">{t("leaderboard.noTeams")}</p>
     );
   }
 
@@ -30,7 +33,7 @@ export function Leaderboard({
                 : "bg-[var(--surface)]"
             }`}
           >
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex min-w-0 items-center gap-3">
               <span
                 className={`font-display tabular-nums tracking-normal ${
                   compact ? "text-lg" : "text-2xl"
@@ -39,11 +42,13 @@ export function Leaderboard({
                 {index + 1}
               </span>
               <div className="min-w-0">
-                <p className={`font-semibold truncate ${compact ? "text-base" : "text-lg"}`}>
+                <p
+                  className={`truncate font-semibold ${compact ? "text-base" : "text-lg"}`}
+                >
                   {team.name}
                 </p>
                 <p className="text-xs text-[var(--muted)]">
-                  {team.isSolo ? "Solo" : "Team"}
+                  {team.isSolo ? t("common.solo") : t("common.team")}
                 </p>
               </div>
             </div>

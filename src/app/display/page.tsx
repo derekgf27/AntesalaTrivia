@@ -6,12 +6,14 @@ import { QRCodeSVG } from "qrcode.react";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { Leaderboard } from "@/components/Leaderboard";
 import { TimerRing } from "@/components/TimerRing";
+import { useLocale } from "@/components/LocaleProvider";
 import { getRememberedDisplayCode } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
 
 function DisplayInner() {
   const searchParams = useSearchParams();
   const preset = searchParams.get("code") || "";
+  const { t } = useLocale();
   const { connected, state, error, displayJoin } = useGameState();
   const [code, setCode] = useState(preset);
   const [joined, setJoined] = useState(false);
@@ -50,15 +52,12 @@ function DisplayInner() {
   if (!joined || !state) {
     return (
       <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-6 px-6">
-        <h1 className="font-display text-4xl">TV display</h1>
-        <p className="text-[var(--muted)]">
-          Enter the lobby code, then drag this window to your TV and press F11.
-        </p>
+        <h1 className="font-display text-4xl">{t("display.title")}</h1>
+        <p className="text-[var(--muted)]">{t("display.subtitle")}</p>
         <input
           className="input uppercase tracking-[0.3em] text-center text-2xl"
           value={code}
           maxLength={6}
-          placeholder="CODE"
           onChange={(e) => setCode(e.target.value.toUpperCase())}
         />
         <button
@@ -73,7 +72,7 @@ function DisplayInner() {
               .finally(() => setBusy(false));
           }}
         >
-          Connect display
+          {t("display.connect")}
         </button>
         {error && <p className="text-[var(--danger)]">{error}</p>}
       </main>
@@ -97,9 +96,10 @@ function DisplayInner() {
     state.phase === "reveal" && state.reveal != null
       ? String.fromCharCode(65 + state.reveal.correctIndex)
       : null;
-  const teamCountLabel = `${state.teams.length} team${
-    state.teams.length === 1 ? "" : "s"
-  } ready`;
+  const teamCountLabel =
+    state.teams.length === 1
+      ? t("display.teamsReady", { count: state.teams.length })
+      : t("display.teamsReadyPlural", { count: state.teams.length });
 
   return (
     <main className="flex min-h-dvh flex-col px-8 pt-5 pb-8 lg:px-14 lg:pt-6 lg:pb-10">
@@ -113,14 +113,14 @@ function DisplayInner() {
         <div className="flex items-center gap-5">
           <Image
             src="/logo.jpg"
-            alt="La Antesala"
+            alt={t("home.brand")}
             width={88}
             height={88}
             className="h-20 w-20 shrink-0 rounded-full object-cover shadow-[0_0_0_3px_var(--accent)] lg:h-24 lg:w-24"
           />
           <div>
             <p className="text-sm uppercase tracking-[0.3em] text-[var(--accent)]">
-              La Antesala Trivia
+              {t("display.brand")}
             </p>
             <p className="mt-1 text-xl text-[var(--text)]">{state.title}</p>
             {progressLabel && (
@@ -150,7 +150,7 @@ function DisplayInner() {
             <div className="flex items-center gap-6 rounded-2xl bg-[var(--navy)] px-6 py-4 ring-1 ring-[var(--line)] sm:gap-8 sm:px-8">
               <div className="text-right">
                 <p className="text-xs uppercase tracking-[0.28em] text-[var(--accent)] sm:text-sm">
-                  Lobby open
+                  {t("display.lobbyOpen")}
                 </p>
                 <p className="font-display mt-2 text-lg text-[var(--cream)] sm:text-xl">
                   {teamCountLabel}
@@ -166,7 +166,7 @@ function DisplayInner() {
               onClick={() => setShowQr((v) => !v)}
               aria-expanded={showQr}
             >
-              {showQr ? "Hide QR" : "Show QR"}
+              {showQr ? t("display.hideQr") : t("display.showQr")}
             </button>
             {showQr && joinUrl && (
               <div className="rounded-2xl bg-white p-4">
@@ -180,7 +180,7 @@ function DisplayInner() {
           <div className="relative z-20 justify-self-end">
             <div className="text-right">
               <p className="text-sm uppercase tracking-[0.2em] text-[var(--muted)]">
-                Lobby code
+                {t("display.lobbyCode")}
               </p>
               <p className="font-code mt-1 text-5xl text-[var(--accent)] lg:text-6xl">
                 {state.code}
@@ -195,9 +195,9 @@ function DisplayInner() {
                   onClick={() => setShowLeaderboard((v) => !v)}
                   aria-expanded={showLeaderboard}
                 >
-                  <h2 className="font-display text-2xl">Leaderboard</h2>
+                  <h2 className="font-display text-2xl">{t("display.leaderboard")}</h2>
                   <span className="text-sm text-[var(--muted)]">
-                    {showLeaderboard ? "Hide" : "Show"}
+                    {showLeaderboard ? t("display.hide") : t("display.show")}
                   </span>
                 </button>
                 {showLeaderboard && (
@@ -214,11 +214,10 @@ function DisplayInner() {
       {state.phase === "lobby" && (
         <section className="flex flex-1 flex-col items-center justify-center text-center">
           <h1 className="font-display text-5xl leading-tight sm:text-7xl">
-            Game starting soon
+            {t("display.startingSoon")}
           </h1>
           <p className="mt-4 max-w-2xl text-2xl text-[var(--muted)]">
-            Join with the lobby code — the host will kick things off when
-            everyone&apos;s ready.
+            {t("display.joinHint")}
           </p>
         </section>
       )}
@@ -227,13 +226,13 @@ function DisplayInner() {
         <section className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center pt-2 text-center">
           {state.phase === "locked" && (
             <p className="mb-5 font-display text-3xl uppercase tracking-[0.12em] text-[var(--accent)] sm:text-4xl">
-              Answers locked
+              {t("display.answersLocked")}
             </p>
           )}
           {state.phase === "reveal" && correctOpt && correctLetter && (
             <div className="mb-7 w-full rounded-3xl bg-[var(--accent-soft)] px-7 py-5 ring-2 ring-[var(--accent)]">
               <p className="text-sm uppercase tracking-[0.25em] text-[var(--accent)]">
-                Correct answer
+                {t("display.correctAnswer")}
               </p>
               <p className="font-display mt-2 text-4xl leading-tight sm:text-5xl lg:text-6xl">
                 <span className="text-[var(--accent)]">{correctLetter}</span>
@@ -272,13 +271,18 @@ function DisplayInner() {
           </ul>
           {state.phase === "question" && (
             <p className="mt-7 text-lg text-[var(--muted)] sm:text-xl">
-              {state.answeredTeamIds.length} team
-              {state.answeredTeamIds.length === 1 ? "" : "s"} answered
+              {state.answeredTeamIds.length === 1
+                ? t("display.teamsAnswered", {
+                    count: state.answeredTeamIds.length,
+                  })
+                : t("display.teamsAnsweredPlural", {
+                    count: state.answeredTeamIds.length,
+                  })}
             </p>
           )}
           {state.phase === "locked" && (
             <p className="mt-7 text-xl text-[var(--muted)]">
-              Revealing the answer…
+              {t("display.revealing")}
             </p>
           )}
         </section>
@@ -287,13 +291,11 @@ function DisplayInner() {
       {state.phase === "finished" && (
         <div className="grid flex-1 items-start gap-8 lg:grid-cols-[1.2fr_0.9fr] lg:gap-12">
           <section className="flex flex-col justify-center">
-            <h1 className="font-display text-6xl sm:text-8xl">Final board</h1>
-            <p className="mt-4 text-2xl text-[var(--muted)]">
-              Thanks for playing — see you next trivia night.
-            </p>
+            <h1 className="font-display text-6xl sm:text-8xl">{t("display.finalBoard")}</h1>
+            <p className="mt-4 text-2xl text-[var(--muted)]">{t("display.thanks")}</p>
           </section>
           <aside className="card-panel p-6">
-            <h2 className="font-display mb-4 text-3xl">Leaderboard</h2>
+            <h2 className="font-display mb-4 text-3xl">{t("display.leaderboard")}</h2>
             <Leaderboard teams={state.teams} />
           </aside>
         </div>
@@ -303,11 +305,13 @@ function DisplayInner() {
 }
 
 export default function DisplayPage() {
+  const { t } = useLocale();
+
   return (
     <Suspense
       fallback={
         <main className="grid min-h-dvh place-items-center text-[var(--muted)]">
-          Loading display…
+          {t("display.loading")}
         </main>
       }
     >

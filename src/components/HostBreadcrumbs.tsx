@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/components/LocaleProvider";
+
 export function HostBreadcrumbs({
   nightTitle,
   phase,
@@ -13,21 +15,24 @@ export function HostBreadcrumbs({
   onHostHome: () => void;
   onOpenNight?: () => void;
 }) {
+  const { t } = useLocale();
   const finished = phase === "finished";
 
   return (
-    <nav aria-label="Host breadcrumb" className="text-sm">
+    <nav aria-label={t("hostBreadcrumbs.aria")} className="text-sm">
       <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--muted)]">
         <li>
           {atHostHome ? (
-            <span className="font-semibold text-[var(--text)]">Host</span>
+            <span className="font-semibold text-[var(--text)]">
+              {t("hostBreadcrumbs.host")}
+            </span>
           ) : (
             <button
               type="button"
               className="font-semibold transition hover:text-[var(--accent)]"
               onClick={onHostHome}
             >
-              Host
+              {t("hostBreadcrumbs.host")}
             </button>
           )}
         </li>
@@ -59,7 +64,7 @@ export function HostBreadcrumbs({
               /
             </li>
             <li className={atHostHome ? "" : "font-semibold text-[var(--text)]"}>
-              Finished
+              {t("hostBreadcrumbs.finished")}
             </li>
           </>
         ) : null}

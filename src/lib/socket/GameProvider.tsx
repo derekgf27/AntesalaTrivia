@@ -23,6 +23,7 @@ import {
   getRememberedDisplayCode,
   isHostUnlocked,
   PLAYER_SESSION_KEY,
+  clearRememberedAdminCode,
   rememberAdminCode,
   rememberDisplayCode,
   unlockHostSession,
@@ -75,6 +76,10 @@ type GameContextValue = {
   adminJoin: (code?: string) => Promise<AdminGameState>;
   createGame: (input: CreateNightInput) => Promise<AdminGameState>;
   listNights: (query?: string) => Promise<ListNightsResult>;
+  deleteNight: (nightId: string) => Promise<{
+    deleted: NightRecord;
+    wasCurrent: boolean;
+  }>;
   displayJoin: (code: string) => Promise<PublicGameState>;
   peekLobby: (code: string) => Promise<PeekLobbyResult>;
   playerJoin: (payload: {
@@ -346,6 +351,30 @@ export function GameProvider({ children }: { children: ReactNode }) {
           currentCode: res.currentCode,
           currentTitle: res.currentTitle,
         })),
+      deleteNight: (nightId) =>
+        postAction<{
+          deleted: NightRecord;
+          wasCurrent: boolean;
+        }>({
+          action: "deleteNight",
+          hostToken: withHostToken(),
+          nightId,
+        }).then((res) => {
+          const deletedCode = res.deleted.code?.toUpperCase();
+          if (
+            res.wasCurrent ||
+            (deletedCode && adminState?.code.toUpperCase() === deletedCode)
+          ) {
+            setAdminState(null);
+            setState(null);
+            setWatch(null);
+            clearRememberedAdminCode();
+          }
+          return {
+            deleted: res.deleted,
+            wasCurrent: res.wasCurrent,
+          };
+        }),
       displayJoin: (code) =>
         postAction<{ state: PublicGameState }>({
           action: "displayJoin",

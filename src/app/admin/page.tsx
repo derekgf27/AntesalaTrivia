@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HostBreadcrumbs } from "@/components/HostBreadcrumbs";
 import { HostNightModal } from "@/components/HostNightModal";
+import { useLocale } from "@/components/LocaleProvider";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
 import type { Question } from "@/lib/game/types";
@@ -20,7 +21,26 @@ function blankQuestion(): Question {
   };
 }
 
+function phaseLabel(
+  phase: string,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  switch (phase) {
+    case "lobby":
+      return t("admin.phaseLobby");
+    case "question":
+      return t("admin.phaseLive");
+    case "locked":
+      return t("admin.phaseLocked");
+    case "reveal":
+      return t("admin.phaseReveal");
+    default:
+      return t("admin.phaseFinished");
+  }
+}
+
 export default function AdminPage() {
+  const { t } = useLocale();
   const router = useRouter();
   const {
     connected,
@@ -30,6 +50,7 @@ export default function AdminPage() {
     createGame,
     adminJoin,
     listNights,
+    deleteNight,
     startQuestion,
     forceLock,
     pauseTimer,
@@ -47,16 +68,11 @@ export default function AdminPage() {
   const [questionsOpen, setQuestionsOpen] = useState(true);
   const [draftQuestions, setDraftQuestions] = useState<Question[]>(SAMPLE_QUESTIONS);
   const [draftTimeLimit, setDraftTimeLimit] = useState(30);
-  const [modalOpen, setModalOpen] = useState(!adminState);
-  const [atHostHome, setAtHostHome] = useState(!adminState);
+  const [modalOpen, setModalOpen] = useState(true);
+  const [atHostHome, setAtHostHome] = useState(true);
   const [hostReady, setHostReady] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [confirmEndNight, setConfirmEndNight] = useState(false);
-  const [lobbyChecks, setLobbyChecks] = useState({
-    teamsIn: false,
-    questionsOk: false,
-    tvUp: false,
-  });
 
   useEffect(() => {
     if (!isHostUnlocked()) {
@@ -161,6 +177,20 @@ export default function AdminPage() {
     }
   }
 
+  async function handleDeleteNight(nightId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteNight(nightId);
+      setAtHostHome(true);
+      setModalOpen(true);
+    } catch {
+      /* surfaced */
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveQuestions() {
     setBusy(true);
     try {
@@ -172,11 +202,11 @@ export default function AdminPage() {
           timeLimitSec: draftTimeLimit,
         }))
         .filter((q) => q.text && q.options.every(Boolean));
-      if (!cleaned.length) throw new Error("Add at least one complete question");
+      if (!cleaned.length) throw new Error(t("admin.needQuestion"));
       await setQuestions(cleaned, draftTimeLimit);
       setEditing(false);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not save");
+      alert(e instanceof Error ? e.message : t("common.couldNotSave"));
     } finally {
       setBusy(false);
     }
@@ -185,7 +215,7 @@ export default function AdminPage() {
   if (!hostReady) {
     return (
       <main className="grid min-h-dvh place-items-center text-[var(--muted)]">
-        Checking host access…
+        {t("admin.checking")}
       </main>
     );
   }
@@ -195,14 +225,11 @@ export default function AdminPage() {
       <main className="relative min-h-dvh">
         <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-4 px-6 py-12">
           {hostCrumbs}
-          <h1 className="font-display text-4xl">Host admin</h1>
-          <p className="text-[var(--muted)]">
-            Create a titled trivia night, resume the current one, or look up past
-            nights.
-          </p>
+          <h1 className="font-display text-4xl">{t("admin.title")}</h1>
+          <p className="text-[var(--muted)]">{t("admin.subtitle")}</p>
           {connected && !adminState && (
             <p className="text-sm text-[var(--muted)]">
-              Reconnecting to the live night if one is open…
+              {t("admin.reconnecting")}
             </p>
           )}
         </div>
@@ -215,6 +242,7 @@ export default function AdminPage() {
           onCreate={handleCreate}
           onResume={handleResume}
           onResumeNight={handleResumeNight}
+          onDeleteNight={handleDeleteNight}
           onLoadHistory={handleLoadHistory}
         />
       </main>
@@ -230,8 +258,6 @@ export default function AdminPage() {
   const answeredCount = adminState.answeredTeamIds.length;
   const teamCount = adminState.teams.length;
   const connectedCount = adminState.connectedTeamIds?.length ?? 0;
-  const lobbyReady =
-    lobbyChecks.teamsIn && lobbyChecks.questionsOk && lobbyChecks.tvUp;
   const liveControls =
     phase === "question" || phase === "locked" || phase === "reveal";
 
@@ -242,45 +268,39 @@ export default function AdminPage() {
           <div>
             {hostCrumbs}
             <p className="mt-3 text-sm uppercase tracking-[0.2em] text-[var(--accent)]">
-              Admin control
+              {t("admin.control")}
             </p>
             <h1 className="font-display text-3xl sm:text-4xl">{adminState.title}</h1>
             <p className="text-sm text-[var(--muted)]">
-              {teamCount} team{teamCount === 1 ? "" : "s"}
+              {teamCount === 1
+                ? t("admin.teamOne", { count: teamCount })
+                : t("admin.teamMany", { count: teamCount })}
               {teamCount > 0
-                ? ` · ${connectedCount} connected`
+                ? t("admin.connected", { count: connectedCount })
                 : ""}
             </p>
           </div>
           <div className="card-panel flex items-center gap-4 px-4 py-3">
             <div className="text-right">
-              <p className="text-xs text-[var(--muted)]">Lobby code</p>
+              <p className="text-xs text-[var(--muted)]">{t("admin.lobbyCode")}</p>
               <p className="font-code text-3xl">{adminState.code}</p>
             </div>
             <div className="h-10 w-px bg-[var(--line)]" aria-hidden />
             <p className="font-display text-xl capitalize text-[var(--accent)]">
-              {phase === "lobby"
-                ? "Lobby open"
-                : phase === "question"
-                  ? "Live"
-                  : phase === "locked"
-                    ? "Locked"
-                    : phase === "reveal"
-                      ? "Reveal"
-                      : "Finished"}
+              {phaseLabel(phase, t)}
             </p>
           </div>
         </header>
 
         {error && (
-          <p className="flex items-center justify-between gap-3 rounded-xl bg-[rgba(255,107,74,0.15)] px-4 py-3 text-[var(--danger)]">
+          <p className="danger-soft-panel flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-[var(--danger)]">
             <span>{error}</span>
             <button
               type="button"
               className="shrink-0 text-sm text-[var(--muted)] hover:text-[var(--text)]"
               onClick={() => setError(null)}
             >
-              Dismiss
+              {t("common.dismiss")}
             </button>
           </p>
         )}
@@ -294,17 +314,10 @@ export default function AdminPage() {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy || teamCount < 1}
+              disabled={busy}
               onClick={() => startQuestion().catch(() => undefined)}
-              title={
-                teamCount < 1
-                  ? "Wait for at least one team"
-                  : lobbyReady
-                    ? "Checklist complete"
-                    : "You can start even if the checklist isn’t done"
-              }
             >
-              Start question 1
+              {t("admin.startQ1")}
             </button>
           )}
           {phase === "question" && (
@@ -316,11 +329,13 @@ export default function AdminPage() {
                   disabled={busy}
                   onClick={() =>
                     resumeTimer().catch((e) =>
-                      setError(e instanceof Error ? e.message : "Could not resume"),
+                      setError(
+                        e instanceof Error ? e.message : t("admin.couldNotResume"),
+                      ),
                     )
                   }
                 >
-                  Resume clock
+                  {t("admin.resumeClock")}
                 </button>
               ) : (
                 <button
@@ -329,11 +344,13 @@ export default function AdminPage() {
                   disabled={busy}
                   onClick={() =>
                     pauseTimer().catch((e) =>
-                      setError(e instanceof Error ? e.message : "Could not pause"),
+                      setError(
+                        e instanceof Error ? e.message : t("admin.couldNotPause"),
+                      ),
                     )
                   }
                 >
-                  Pause clock
+                  {t("admin.pauseClock")}
                 </button>
               )}
               <button
@@ -342,11 +359,13 @@ export default function AdminPage() {
                 disabled={busy}
                 onClick={() =>
                   restartTimer().catch((e) =>
-                    setError(e instanceof Error ? e.message : "Could not restart"),
+                    setError(
+                      e instanceof Error ? e.message : t("admin.couldNotRestart"),
+                    ),
                   )
                 }
               >
-                Restart clock
+                {t("admin.restartClock")}
               </button>
               <button
                 type="button"
@@ -354,7 +373,7 @@ export default function AdminPage() {
                 disabled={busy}
                 onClick={() => forceLock().catch(() => undefined)}
               >
-                Lock now
+                {t("admin.lockNow")}
               </button>
             </>
           )}
@@ -365,7 +384,7 @@ export default function AdminPage() {
               disabled={busy}
               onClick={() => forceLock().catch(() => undefined)}
             >
-              Reveal now
+              {t("admin.revealNow")}
             </button>
           )}
           {moreAfterReveal && (
@@ -375,7 +394,7 @@ export default function AdminPage() {
               disabled={busy}
               onClick={() => nextQuestion().catch(() => undefined)}
             >
-              Next question
+              {t("admin.nextQuestion")}
             </button>
           )}
           {isLastReveal && (
@@ -385,13 +404,16 @@ export default function AdminPage() {
               disabled={busy}
               onClick={() => nextQuestion().catch(() => undefined)}
             >
-              Final leaderboard
+              {t("admin.finalLeaderboard")}
             </button>
           )}
           <div className="ml-auto flex flex-col items-end gap-1">
             {(phase === "question" || phase === "locked") && (
               <p className="font-display text-2xl text-[var(--accent)] sm:text-3xl">
-                {answeredCount} / {teamCount} answered
+                {t("admin.answered", {
+                  answered: answeredCount,
+                  total: teamCount,
+                })}
               </p>
             )}
             <span className="text-sm text-[var(--muted)] capitalize">
@@ -401,46 +423,6 @@ export default function AdminPage() {
             </span>
           </div>
         </div>
-
-        {phase === "lobby" && (
-          <div className="card-panel space-y-3 p-5">
-            <h3 className="font-display text-xl">Before you start</h3>
-            <p className="text-sm text-[var(--muted)]">
-              Soft checklist — start whenever you&apos;re ready.
-            </p>
-            {(
-              [
-                ["teamsIn", `${teamCount} team${teamCount === 1 ? "" : "s"} in the lobby`],
-                ["questionsOk", "Questions look good"],
-                ["tvUp", "TV display is up"],
-              ] as const
-            ).map(([key, label]) => (
-              <label
-                key={key}
-                className="flex cursor-pointer items-center gap-3 text-[var(--text)]"
-              >
-                <input
-                  type="checkbox"
-                  checked={lobbyChecks[key]}
-                  onChange={(e) =>
-                    setLobbyChecks((prev) => ({
-                      ...prev,
-                      [key]: e.target.checked,
-                    }))
-                  }
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-            {lobbyReady ? (
-              <p className="text-sm text-[var(--accent)]">Ready for question 1.</p>
-            ) : (
-              <p className="text-sm text-[var(--muted)]">
-                Tip: open the TV and wait for a few teams before kicking off.
-              </p>
-            )}
-          </div>
-        )}
 
         {(phase === "question" || phase === "locked" || phase === "reveal") &&
           q && (
@@ -456,11 +438,11 @@ export default function AdminPage() {
               ) : null}
               <div className="flex-1">
                 <p className="text-sm text-[var(--muted)]">
-                  Question {adminState.questionIndex + 1}
+                  {t("admin.questionN", { n: adminState.questionIndex + 1 })}
                   {phase === "locked"
-                    ? " · Answers locked"
+                    ? t("admin.questionLocked")
                     : adminState.timerPaused
-                      ? " · Clock paused"
+                      ? t("admin.clockPaused")
                       : ""}
                 </p>
                 <h2 className="font-display text-2xl leading-tight">{q.text}</h2>
@@ -486,7 +468,7 @@ export default function AdminPage() {
                         </span>
                         {opt}
                         <span className="float-right text-sm text-[var(--muted)]">
-                          {answerCount} ans
+                          {t("admin.answersShort", { count: answerCount })}
                         </span>
                       </li>
                     );
@@ -499,17 +481,14 @@ export default function AdminPage() {
 
         {phase === "finished" && (
           <div className="card-panel space-y-4 p-5">
-            <h2 className="font-display text-3xl">Night complete</h2>
-            <p className="text-[var(--muted)]">
-              Final scores are locked. Start another night from Host whenever
-              you&apos;re ready.
-            </p>
+            <h2 className="font-display text-3xl">{t("admin.nightComplete")}</h2>
+            <p className="text-[var(--muted)]">{t("admin.nightCompleteHint")}</p>
             <button
               type="button"
               className="btn btn-primary"
               onClick={goToHostHome}
             >
-              Create a new night
+              {t("admin.newNight")}
             </button>
           </div>
         )}
@@ -522,9 +501,9 @@ export default function AdminPage() {
               onClick={() => setQuestionsOpen((v) => !v)}
               aria-expanded={questionsOpen}
             >
-              <h3 className="font-display text-xl">Questions</h3>
+              <h3 className="font-display text-xl">{t("admin.questions")}</h3>
               <span className="text-sm text-[var(--muted)]">
-                {questionsOpen ? "Hide" : "Show"}
+                {questionsOpen ? t("admin.hide") : t("admin.show")}
               </span>
             </button>
             {phase !== "finished" && questionsOpen && (
@@ -541,7 +520,7 @@ export default function AdminPage() {
                   setEditing((v) => !v);
                 }}
               >
-                {editing ? "Close editor" : "Edit"}
+                {editing ? t("admin.closeEditor") : t("admin.edit")}
               </button>
             )}
           </div>
@@ -549,11 +528,7 @@ export default function AdminPage() {
             (!editing ? (
               <div className="space-y-3">
                 <p className="text-sm text-[var(--muted)]">
-                  Answer time:{" "}
-                  <span className="text-[var(--text)]">
-                    {adminState.timeLimitSec}s
-                  </span>{" "}
-                  for every question
+                  {t("admin.answerTime", { sec: adminState.timeLimitSec })}
                 </p>
                 <ol className="space-y-2 text-sm text-[var(--muted)]">
                   {adminState.questions.map((item, idx) => (
@@ -566,7 +541,7 @@ export default function AdminPage() {
             ) : (
               <div className="space-y-6">
                 <label className="flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
-                  Answer time for every question (sec)
+                  {t("admin.answerTimeLabel")}
                   <input
                     className="input max-w-28"
                     type="number"
@@ -584,7 +559,9 @@ export default function AdminPage() {
                     className="space-y-2 rounded-xl bg-[var(--surface-2)] p-4"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm text-[var(--muted)]">Question {qi + 1}</p>
+                      <p className="text-sm text-[var(--muted)]">
+                        {t("admin.questionN", { n: qi + 1 })}
+                      </p>
                       <div className="flex flex-wrap gap-1">
                         <button
                           type="button"
@@ -597,7 +574,7 @@ export default function AdminPage() {
                             setDraftQuestions(next);
                           }}
                         >
-                          Up
+                          {t("admin.up")}
                         </button>
                         <button
                           type="button"
@@ -610,7 +587,7 @@ export default function AdminPage() {
                             setDraftQuestions(next);
                           }}
                         >
-                          Down
+                          {t("admin.down")}
                         </button>
                         <button
                           type="button"
@@ -626,7 +603,7 @@ export default function AdminPage() {
                             setDraftQuestions(next);
                           }}
                         >
-                          Duplicate
+                          {t("admin.duplicate")}
                         </button>
                         <button
                           type="button"
@@ -639,14 +616,13 @@ export default function AdminPage() {
                             );
                           }}
                         >
-                          Remove
+                          {t("admin.remove")}
                         </button>
                       </div>
                     </div>
                     <input
                       className="input"
                       value={item.text}
-                      placeholder={`Question ${qi + 1}`}
                       onChange={(e) => {
                         const next = [...draftQuestions];
                         next[qi] = { ...item, text: e.target.value };
@@ -671,7 +647,6 @@ export default function AdminPage() {
                         <input
                           className="input"
                           value={opt}
-                          placeholder={`Option ${String.fromCharCode(65 + oi)}`}
                           onChange={(e) => {
                             const next = [...draftQuestions];
                             const options = [...item.options] as Question["options"];
@@ -692,7 +667,7 @@ export default function AdminPage() {
                       setDraftQuestions((qlist) => [...qlist, blankQuestion()])
                     }
                   >
-                    Add question
+                    {t("admin.addQuestion")}
                   </button>
                   <button
                     type="button"
@@ -700,7 +675,7 @@ export default function AdminPage() {
                     disabled={busy}
                     onClick={saveQuestions}
                   >
-                    Save questions
+                    {t("admin.saveQuestions")}
                   </button>
                 </div>
               </div>
@@ -710,7 +685,7 @@ export default function AdminPage() {
 
       <aside className="flex flex-col gap-5">
         <div className="card-panel p-5">
-          <h3 className="font-display text-xl mb-3">TV display</h3>
+          <h3 className="font-display text-xl mb-3">{t("admin.tvDisplay")}</h3>
           {displayUrl && (
             <button
               type="button"
@@ -719,7 +694,7 @@ export default function AdminPage() {
                 window.open(displayUrl, "antesala-tv", "noopener,noreferrer")
               }
             >
-              Open TV display
+              {t("admin.openTv")}
             </button>
           )}
         </div>
@@ -731,16 +706,16 @@ export default function AdminPage() {
             onClick={() => setShowLeaderboard((v) => !v)}
             aria-expanded={showLeaderboard}
           >
-            <h3 className="font-display text-xl">Lobby / scores</h3>
+            <h3 className="font-display text-xl">{t("admin.lobbyScores")}</h3>
             <span className="text-sm text-[var(--muted)]">
-              {showLeaderboard ? "Hide" : "Show"}
+              {showLeaderboard ? t("admin.hide") : t("admin.show")}
             </span>
           </button>
           {showLeaderboard && (
             <ul className="space-y-3">
               {adminState.teams.length === 0 ? (
                 <li className="text-sm text-[var(--muted)]">
-                  No teams yet — waiting for players.
+                  {t("admin.noTeams")}
                 </li>
               ) : (
                 adminState.teams.map((team, index) => {
@@ -767,8 +742,12 @@ export default function AdminPage() {
                                 : "text-[var(--muted)]"
                             }`}
                           >
-                            {isConnected ? "Connected" : "Disconnected"}
-                            {team.isSolo ? " · Solo" : " · Team"}
+                            {isConnected
+                              ? t("admin.connectedStatus")
+                              : t("admin.disconnected")}
+                            {team.isSolo
+                              ? ` · ${t("common.solo")}`
+                              : ` · ${t("common.team")}`}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -779,7 +758,7 @@ export default function AdminPage() {
                             onClick={() =>
                               adjustScore(team.id, -1).catch(() => undefined)
                             }
-                            aria-label={`Subtract point from ${team.name}`}
+                            aria-label={t("admin.subtractPoint", { name: team.name })}
                           >
                             −
                           </button>
@@ -793,7 +772,7 @@ export default function AdminPage() {
                             onClick={() =>
                               adjustScore(team.id, 1).catch(() => undefined)
                             }
-                            aria-label={`Add point to ${team.name}`}
+                            aria-label={t("admin.addPoint", { name: team.name })}
                           >
                             +
                           </button>
@@ -808,7 +787,7 @@ export default function AdminPage() {
                             kickTeam(team.id).catch(() => undefined)
                           }
                         >
-                          Kick
+                          {t("admin.kick")}
                         </button>
                       </div>
                     </li>
@@ -828,13 +807,12 @@ export default function AdminPage() {
                 disabled={busy}
                 onClick={() => setConfirmEndNight(true)}
               >
-                End night
+                {t("admin.endNight")}
               </button>
             ) : (
               <div className="space-y-3">
                 <p className="text-sm text-[var(--muted)]">
-                  This closes the night for everyone and locks the final
-                  leaderboard. You can&apos;t undo this.
+                  {t("admin.endConfirm")}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -847,7 +825,7 @@ export default function AdminPage() {
                         .catch(() => undefined);
                     }}
                   >
-                    Yes, end this night
+                    {t("admin.yesEnd")}
                   </button>
                   <button
                     type="button"
@@ -855,7 +833,7 @@ export default function AdminPage() {
                     disabled={busy}
                     onClick={() => setConfirmEndNight(false)}
                   >
-                    Cancel
+                    {t("common.cancel")}
                   </button>
                 </div>
               </div>

@@ -4,10 +4,12 @@ import { titleFromScheduledDate, toDateInputValue } from "./dateUtils";
 import {
   findNightByCode,
   findOpenNight,
+  deleteNightById,
   upsertNight,
 } from "./nightHistory";
 import {
   assertStoreReady,
+  deleteRoomData,
   getCurrentCode,
   getRoomData,
   setCurrentCode,
@@ -554,6 +556,28 @@ class GameStore {
     room.timerEndsAt = null;
     room.timerPausedRemainingMs = null;
     room.lockedAt = null;
+  }
+
+  async deleteNight(id: string): Promise<{
+    deleted: NightRecord;
+    wasCurrent: boolean;
+  }> {
+    assertStoreReady();
+    return withLock(`night:${id}`, async () => {
+      const removed = await deleteNightById(id);
+      if (!removed) throw new Error("Night not found");
+
+      const code = removed.code.toUpperCase().trim();
+      if (code) await deleteRoomData(code);
+
+      const current = await getCurrentCode();
+      const wasCurrent = Boolean(
+        current && code && current.toUpperCase() === code,
+      );
+      if (wasCurrent) await setCurrentCode(null);
+
+      return { deleted: removed, wasCurrent };
+    });
   }
 
   submitAnswer(room: GameRoom, teamId: string, optionIndex: number) {

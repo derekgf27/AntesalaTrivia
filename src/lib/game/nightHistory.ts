@@ -21,6 +21,17 @@ export async function upsertNight(record: NightRecord) {
   await setNightsData(nights);
 }
 
+export async function deleteNightById(
+  id: string,
+): Promise<NightRecord | undefined> {
+  const nights = await getNightsData<NightRecord>();
+  const idx = nights.findIndex((n) => n.id === id);
+  if (idx < 0) return undefined;
+  const [removed] = nights.splice(idx, 1);
+  await setNightsData(nights);
+  return removed;
+}
+
 export async function searchNights(query: string): Promise<NightRecord[]> {
   const q = query.trim().toLowerCase();
   const all = await listNights();
