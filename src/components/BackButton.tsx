@@ -8,7 +8,7 @@ export function BackButton() {
   const pathname = usePathname();
   const { t } = useLocale();
 
-  if (pathname === "/") return null;
+  if (pathname === "/" || pathname === "/display") return null;
 
   return (
     <button
