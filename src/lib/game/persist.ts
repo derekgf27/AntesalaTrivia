@@ -47,15 +47,17 @@ function writeNightsFile(nights: unknown[]) {
 }
 
 export function redisEnabled() {
-  return Boolean(
-    process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN,
-  );
+  const url =
+    process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  return Boolean(url && token);
 }
 
 export function assertStoreReady() {
   if (process.env.VERCEL && !redisEnabled()) {
     throw new Error(
-      "Vercel needs Upstash Redis. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in the project env vars.",
+      "Vercel needs Upstash Redis. In the Vercel project, add Storage → Upstash Redis (free), then redeploy. Expected env: UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or KV_REST_API_URL and KV_REST_API_TOKEN).",
     );
   }
 }
