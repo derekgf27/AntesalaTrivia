@@ -73,9 +73,9 @@ export default function PlayPage() {
   const correctIndex = state.reveal?.correctIndex ?? null;
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-5 px-4 py-6">
-      <header className="flex items-start justify-between gap-3">
-        <div>
+    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-5 px-4 pb-6 pt-16 sm:pt-8">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.2em] text-[var(--accent)]">
             {state.code}
           </p>
@@ -89,12 +89,14 @@ export default function PlayPage() {
           </p>
         </div>
         {state.phase === "question" && q && (
-          <TimerRing
-            timerEndsAt={state.timerEndsAt}
-            paused={state.timerPaused}
-            pausedRemainingMs={state.timerPausedRemainingMs}
-            totalSec={state.timeLimitSec}
-          />
+          <div className="flex shrink-0 justify-end sm:justify-start">
+            <TimerRing
+              timerEndsAt={state.timerEndsAt}
+              paused={state.timerPaused}
+              pausedRemainingMs={state.timerPausedRemainingMs}
+              totalSec={state.timeLimitSec}
+            />
+          </div>
         )}
       </header>
 

@@ -7,6 +7,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { Leaderboard } from "@/components/Leaderboard";
 import { TimerRing } from "@/components/TimerRing";
 import { useLocale } from "@/components/LocaleProvider";
+import { LOBBY_CODE_LENGTH, clampLobbyCode } from "@/lib/game/code";
 import { getRememberedDisplayCode } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
 
@@ -15,7 +16,7 @@ function DisplayInner() {
   const preset = searchParams.get("code") || "";
   const { t } = useLocale();
   const { connected, state, error, displayJoin } = useGameState();
-  const [code, setCode] = useState(preset);
+  const [code, setCode] = useState(clampLobbyCode(preset));
   const [joined, setJoined] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showQr, setShowQr] = useState(true);
@@ -24,7 +25,7 @@ function DisplayInner() {
   useEffect(() => {
     if (preset) return;
     const remembered = getRememberedDisplayCode();
-    if (remembered) setCode(remembered);
+    if (remembered) setCode(clampLobbyCode(remembered));
   }, [preset]);
 
   useEffect(() => {
@@ -57,13 +58,13 @@ function DisplayInner() {
         <input
           className="input uppercase tracking-[0.3em] text-center text-2xl"
           value={code}
-          maxLength={6}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          maxLength={LOBBY_CODE_LENGTH}
+          onChange={(e) => setCode(clampLobbyCode(e.target.value))}
         />
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!connected || busy || code.length < 4}
+          disabled={!connected || busy || code.length < LOBBY_CODE_LENGTH}
           onClick={() => {
             setBusy(true);
             displayJoin(code)

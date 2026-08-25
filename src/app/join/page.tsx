@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/components/LocaleProvider";
+import { LOBBY_CODE_LENGTH, clampLobbyCode } from "@/lib/game/code";
 import type { Team } from "@/lib/game/types";
 import { PLAYER_SESSION_KEY } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
@@ -14,7 +15,7 @@ function JoinForm() {
   const { t } = useLocale();
 
   const { connected, playerJoin, peekLobby, error, setError } = useGameState();
-  const [code, setCode] = useState(presetCode.toUpperCase());
+  const [code, setCode] = useState(clampLobbyCode(presetCode));
   const [playerName, setPlayerName] = useState("");
   const [mode, setMode] = useState<"createTeam" | "joinTeam" | "solo">(
     "createTeam",
@@ -36,7 +37,7 @@ function JoinForm() {
   );
 
   const canSubmit = useMemo(() => {
-    if (!code || !playerName.trim()) return false;
+    if (code.length !== LOBBY_CODE_LENGTH || !playerName.trim()) return false;
     if (mode === "createTeam") return Boolean(teamName.trim());
     if (mode === "joinTeam") return Boolean(teamId);
     return true;
@@ -45,7 +46,7 @@ function JoinForm() {
   useEffect(() => {
     if (mode !== "joinTeam") return;
     const trimmed = code.trim();
-    if (trimmed.length < 4 || !connected) return;
+    if (trimmed.length < LOBBY_CODE_LENGTH || !connected) return;
 
     let cancelled = false;
     const handle = window.setTimeout(() => {
@@ -116,10 +117,10 @@ function JoinForm() {
           <input
             className="input text-center text-2xl uppercase tracking-[0.25em]"
             value={code}
-            maxLength={6}
+            maxLength={LOBBY_CODE_LENGTH}
             required
             onChange={(e) => {
-              setCode(e.target.value.toUpperCase());
+              setCode(clampLobbyCode(e.target.value));
               setPeeked(false);
               setLobbyTeams([]);
               setTeamId("");
@@ -165,7 +166,7 @@ function JoinForm() {
 
         {mode === "joinTeam" && (
           <div className="space-y-3">
-            {!peeked && code.length >= 4 && (
+            {!peeked && code.length >= LOBBY_CODE_LENGTH && (
               <p className="text-sm text-[var(--muted)]">{t("join.loadingTeams")}</p>
             )}
             {lobbyTeams.length === 0 && peeked && (

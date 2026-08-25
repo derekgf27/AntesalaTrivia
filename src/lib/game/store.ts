@@ -16,6 +16,7 @@ import {
   setRoomData,
   withLock,
 } from "./persist";
+import { LOBBY_CODE_LENGTH } from "./code";
 import type {
   AdminGameState,
   CreateNightInput,
@@ -32,7 +33,7 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const REVEAL_DELAY_MS = 2500;
 const ONLINE_MS = 20_000;
 
-function generateCode(length = 4): string {
+function generateCode(length = LOBBY_CODE_LENGTH): string {
   let code = "";
   for (let i = 0; i < length; i++) {
     code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
