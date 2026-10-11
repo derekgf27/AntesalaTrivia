@@ -1,6 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { Redis } from "@upstash/redis";
+import {
+  REDIS_URL_HELP,
+  hasRedisEnv,
+  publicErrorMessage,
+  resolveRedisCredentials,
+} from "./redisEnv";
 
 const MEMORY = Symbol.for("antesala-trivia-memory");
 
@@ -8,7 +14,6 @@ type MemoryDb = {
   rooms: Map<string, unknown>;
   nights: unknown[];
   currentCode: string | null;
-  tokens: Map<string, number>;
 };
 
 function memory(): MemoryDb {
@@ -18,7 +23,6 @@ function memory(): MemoryDb {
       rooms: new Map(),
       nights: loadNightsFile(),
       currentCode: null,
-      tokens: new Map(),
     };
   }
   return g[MEMORY]!;
@@ -47,14 +51,13 @@ function writeNightsFile(nights: unknown[]) {
 }
 
 export function redisEnabled() {
-  const url =
-    process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-  const token =
-    process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  return Boolean(url && token);
+  return hasRedisEnv();
 }
 
 export function assertStoreReady() {
+  if (redisEnabled() && !resolveRedisCredentials()) {
+    throw new Error(REDIS_URL_HELP);
+  }
   if (process.env.VERCEL && !redisEnabled()) {
     throw new Error(
       "Vercel needs Upstash Redis. In the Vercel project, add Storage → Upstash Redis (free), then redeploy. Expected env: UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or KV_REST_API_URL and KV_REST_API_TOKEN).",
@@ -63,7 +66,43 @@ export function assertStoreReady() {
 }
 
 function redis() {
-  return Redis.fromEnv();
+  const creds = resolveRedisCredentials();
+  if (!creds) throw new Error(REDIS_URL_HELP);
+  return new Redis({
+    url: creds.url,
+    token: creds.token,
+    // undici throws TypeError "fetch failed" when keepalive is set on Vercel.
+    keepAlive: false,
+    cache: "no-store",
+    retry: { retries: 1, backoff: () => 150 },
+  });
+}
+
+const PING_OK_MS = 20_000;
+const PING_FAIL_MS = 5_000;
+let pingCache: { at: number; error: string | null } | null = null;
+
+/** Confirm Redis answers. Health uses this so the host button is not a false positive. */
+export async function assertRedisReachable() {
+  assertStoreReady();
+  if (!redisEnabled()) return;
+  const now = Date.now();
+  if (pingCache) {
+    const ttl = pingCache.error ? PING_FAIL_MS : PING_OK_MS;
+    if (now - pingCache.at < ttl) {
+      if (pingCache.error) throw new Error(pingCache.error);
+      return;
+    }
+  }
+  try {
+    const pong = await redis().ping();
+    if (pong !== "PONG") throw new Error("Upstash Redis did not respond to PING");
+    pingCache = { at: now, error: null };
+  } catch (error) {
+    const message = publicErrorMessage(error);
+    pingCache = { at: now, error: message };
+    throw new Error(message);
+  }
 }
 
 export async function withLock<T>(
@@ -144,29 +183,4 @@ export async function setNightsData(nights: unknown[]) {
     return;
   }
   await redis().set("nights", nights);
-}
-
-export async function setHostToken(token: string, expiresAt: number) {
-  const ttlSec = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
-  if (!redisEnabled()) {
-    memory().tokens.set(token, expiresAt);
-    return;
-  }
-  await redis().set(`token:${token}`, expiresAt, { ex: ttlSec });
-}
-
-export async function getHostTokenExpiry(
-  token: string,
-): Promise<number | null> {
-  if (!redisEnabled()) return memory().tokens.get(token) ?? null;
-  const value = await redis().get<number>(`token:${token}`);
-  return typeof value === "number" ? value : null;
-}
-
-export async function deleteHostToken(token: string) {
-  if (!redisEnabled()) {
-    memory().tokens.delete(token);
-    return;
-  }
-  await redis().del(`token:${token}`);
 }

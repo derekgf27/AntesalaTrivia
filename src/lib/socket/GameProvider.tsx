@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -18,7 +19,6 @@ import type {
   Team,
 } from "@/lib/game/types";
 import {
-  getHostToken,
   getRememberedAdminCode,
   getRememberedDisplayCode,
   isHostUnlocked,
@@ -26,7 +26,6 @@ import {
   clearRememberedAdminCode,
   rememberAdminCode,
   rememberDisplayCode,
-  unlockHostSession,
 } from "@/lib/hostSession";
 
 type PlayerSession = {
@@ -72,7 +71,6 @@ type GameContextValue = {
   error: string | null;
   setError: (message: string | null) => void;
   setPlayer: (player: PlayerSession | null) => void;
-  hostAuth: (pin: string) => Promise<string>;
   adminJoin: (code?: string) => Promise<AdminGameState>;
   createGame: (input: CreateNightInput) => Promise<AdminGameState>;
   listNights: (query?: string) => Promise<ListNightsResult>;
@@ -129,6 +127,7 @@ async function postAction<T>(payload: Record<string, unknown>): Promise<T> {
 
 export function GameProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
+  const healthError = useRef<string | null>(null);
   const [state, setState] = useState<PublicGameState | null>(null);
   const [adminState, setAdminState] = useState<AdminGameState | null>(null);
   const [player, setPlayer] = useState<PlayerSession | null>(null);
@@ -143,7 +142,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
         const data = (await res.json()) as { ok?: boolean; error?: string };
         if (cancelled) return;
         setConnected(res.ok);
-        if (!res.ok && data.error) setError(data.error);
+        if (res.ok) {
+          const stale = healthError.current;
+          healthError.current = null;
+          if (stale) setError((prev) => (prev === stale ? null : prev));
+        } else if (data.error) {
+          healthError.current = data.error;
+          setError(data.error);
+        }
       } catch {
         if (!cancelled) setConnected(false);
       }
@@ -166,10 +172,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
           code: watch.code,
           view: watch.view,
         });
-        if (watch.view === "admin") {
-          const token = getHostToken();
-          if (token) params.set("hostToken", token);
-        }
         if (watch.playerId) params.set("playerId", watch.playerId);
         const res = await fetch(`/api/game?${params.toString()}`);
         const data = (await res.json()) as {
@@ -202,12 +204,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     if (!connected) return;
 
     if (isHostUnlocked()) {
-      const token = getHostToken();
       const code = getRememberedAdminCode();
-      if (!token) return;
       void postAction<{ adminState?: AdminGameState }>({
         action: "adminJoin",
-        hostToken: token,
         code: code || undefined,
       })
         .then((res) => {
@@ -272,12 +271,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
   }, [connected]);
 
-  const withHostToken = useCallback(() => {
-    const hostToken = getHostToken();
-    if (!hostToken) throw new Error("Host session expired — enter the PIN again");
-    return hostToken;
-  }, []);
-
   const hostAction = useCallback(
     async <T,>(action: string, extra: Record<string, unknown> = {}) => {
       setError(null);
@@ -285,7 +278,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
         T & { state?: PublicGameState; adminState?: AdminGameState }
       >({
         action,
-        hostToken: withHostToken(),
         code: getRememberedAdminCode() || undefined,
         ...extra,
       });
@@ -299,7 +291,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
       return data;
     },
-    [withHostToken],
+    [],
   );
 
   const value = useMemo<GameContextValue>(
@@ -311,14 +303,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       error,
       setError,
       setPlayer,
-      hostAuth: (pin) =>
-        postAction<{ hostToken: string }>({ action: "hostAuth", pin }).then(
-          (res) => {
-            unlockHostSession(res.hostToken);
-            setError(null);
-            return res.hostToken;
-          },
-        ),
       createGame: (input) =>
         hostAction<{ adminState: AdminGameState }>("createGame", {
           ...input,
@@ -343,7 +327,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
           currentTitle: string | null;
         }>({
           action: "listNights",
-          hostToken: withHostToken(),
           query,
         }).then((res) => ({
           nights: res.nights,
@@ -357,7 +340,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
           wasCurrent: boolean;
         }>({
           action: "deleteNight",
-          hostToken: withHostToken(),
           nightId,
         }).then((res) => {
           const deletedCode = res.deleted.code?.toUpperCase();
@@ -459,7 +441,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       player,
       error,
       hostAction,
-      withHostToken,
     ],
   );
 

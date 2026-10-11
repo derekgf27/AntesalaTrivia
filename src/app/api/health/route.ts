@@ -1,18 +1,21 @@
 import { NextResponse } from "next/server";
-import { assertStoreReady, redisEnabled } from "@/lib/game/persist";
+import { assertRedisReachable, redisEnabled } from "@/lib/game/persist";
+import { publicErrorMessage } from "@/lib/game/redisEnv";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    assertStoreReady();
+    await assertRedisReachable();
     return NextResponse.json({
       ok: true,
       redis: redisEnabled(),
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Game server is not ready";
-    return NextResponse.json({ ok: false, error: message }, { status: 503 });
+    console.error(error);
+    return NextResponse.json(
+      { ok: false, error: publicErrorMessage(error) },
+      { status: 503 },
+    );
   }
 }
