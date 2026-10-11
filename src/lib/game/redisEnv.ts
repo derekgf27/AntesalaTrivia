@@ -133,6 +133,17 @@ function causeChain(error: Error): string {
   return parts.join(": ");
 }
 
+export function isRedisNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message.startsWith("Could not reach Upstash Redis")) return true;
+  return (
+    (error instanceof TypeError && /fetch failed|failed to fetch/i.test(error.message)) ||
+    /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|certificate|UNABLE_TO_VERIFY|UND_ERR|NXDOMAIN/i.test(
+      causeChain(error),
+    )
+  );
+}
+
 /** Turn undici's bare "fetch failed" into the reason the host screen can show. */
 export function publicErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return "Request failed";
@@ -142,12 +153,7 @@ export function publicErrorMessage(error: unknown): string {
   if (error.message === REDIS_URL_HELP || error.message.startsWith("Could not reach Upstash Redis")) {
     return error.message;
   }
-  const network =
-    (error instanceof TypeError && /fetch failed|failed to fetch/i.test(error.message)) ||
-    /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|certificate|UNABLE_TO_VERIFY|UND_ERR/i.test(
-      causeChain(error),
-    );
-  if (!network) return error.message;
+  if (!isRedisNetworkError(error)) return error.message;
   const detail = causeChain(error);
   return `Could not reach Upstash Redis (${detail}). Set UPSTASH_REDIS_REST_URL to the https REST URL, not the rediss:// connection string, then redeploy.`;
 }
