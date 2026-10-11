@@ -14,7 +14,7 @@ function HostPinModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const { connected, hostAuth } = useGameState();
+  const { connected, hostAuth, serverError } = useGameState();
   const { t } = useLocale();
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -62,9 +62,15 @@ function HostPinModal({
             autoComplete="off"
           />
           {!connected && (
-            <p className="text-sm text-[var(--warning)]">{t("hostPin.serverError")}</p>
+            <p className="text-sm text-[var(--warning)]" role="status">
+              {serverError || t("hostPin.serverError")}
+            </p>
           )}
-          {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
+          {error && (
+            <p className="text-sm text-[var(--danger)]" role="alert">
+              {error}
+            </p>
+          )}
           <button
             type="submit"
             className="btn btn-primary"

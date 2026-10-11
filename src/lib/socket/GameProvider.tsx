@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -66,6 +67,8 @@ type Watch = {
 
 type GameContextValue = {
   connected: boolean;
+  /** Set when /api/health reports the game store is down. */
+  serverError: string | null;
   state: PublicGameState | null;
   adminState: AdminGameState | null;
   player: PlayerSession | null;
@@ -129,6 +132,8 @@ async function postAction<T>(payload: Record<string, unknown>): Promise<T> {
 
 export function GameProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const healthError = useRef<string | null>(null);
   const [state, setState] = useState<PublicGameState | null>(null);
   const [adminState, setAdminState] = useState<AdminGameState | null>(null);
   const [player, setPlayer] = useState<PlayerSession | null>(null);
@@ -143,7 +148,19 @@ export function GameProvider({ children }: { children: ReactNode }) {
         const data = (await res.json()) as { ok?: boolean; error?: string };
         if (cancelled) return;
         setConnected(res.ok);
-        if (!res.ok && data.error) setError(data.error);
+        if (res.ok) {
+          setServerError(null);
+          const stale = healthError.current;
+          healthError.current = null;
+          if (stale) setError((prev) => (prev === stale ? null : prev));
+        } else {
+          const message = data.error || null;
+          setServerError(message);
+          if (message) {
+            healthError.current = message;
+            setError(message);
+          }
+        }
       } catch {
         if (!cancelled) setConnected(false);
       }
@@ -305,6 +322,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const value = useMemo<GameContextValue>(
     () => ({
       connected,
+      serverError,
       state,
       adminState,
       player,
@@ -454,6 +472,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }),
     [
       connected,
+      serverError,
       state,
       adminState,
       player,

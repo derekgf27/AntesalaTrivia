@@ -25,12 +25,12 @@ This app uses Next.js API routes and short polling, so it can run on Vercel. Ver
 
 1. Create a free Redis database at [Upstash](https://upstash.com) (or Vercel Storage → Upstash Redis).
 2. In the Vercel project, set:
-   - `UPSTASH_REDIS_REST_URL`
+   - `UPSTASH_REDIS_REST_URL` — the `https://….upstash.io` REST URL, not the `rediss://` connection string
    - `UPSTASH_REDIS_REST_TOKEN`
    - `ADMIN_PIN` (optional; default `9271`)
 3. Redeploy.
 
-Without those Redis env vars, Host/Play will show that the game server is not ready.
+Vercel Marketplace also injects `KV_REST_API_URL` / `KV_REST_API_TOKEN` and sometimes only the `rediss://` URL (`REDIS_URL` or `KV_URL`). Those are accepted. Host stays disabled until Redis answers a ping, and a failed login shows the connection error instead of `fetch failed`.
 
 ## How to run a night
 

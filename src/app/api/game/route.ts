@@ -6,11 +6,13 @@ import {
 import { searchNights } from "@/lib/game/nightHistory";
 import { gameStore, toAdmin, toPublic } from "@/lib/game/store";
 import type { Question } from "@/lib/game/types";
+import { publicErrorMessage } from "@/lib/game/redisEnv";
 
 export const runtime = "nodejs";
 
 function fail(error: unknown, status = 400) {
-  const message = error instanceof Error ? error.message : "Request failed";
+  if (status !== 401) console.error(error);
+  const message = publicErrorMessage(error);
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
     const state = await gameStore.snapshot(code, { playerId });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Request failed";
+    const message = publicErrorMessage(error);
     const status =
       message.includes("expired") || message.includes("PIN") ? 401 : 400;
     return fail(error, status);
@@ -287,7 +289,7 @@ export async function POST(req: NextRequest) {
         throw new Error("Unknown action");
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Request failed";
+    const message = publicErrorMessage(error);
     const status =
       message.includes("expired") || message.includes("Wrong admin PIN")
         ? 401
