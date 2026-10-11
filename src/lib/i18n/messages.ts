@@ -23,7 +23,6 @@ export const messages: Record<Locale, MessageTree> = {
       continue: "Continue",
       couldNotSave: "Could not save",
       couldNotLoadTeams: "Could not load teams",
-      wrongPin: "Wrong PIN",
     },
     theme: {
       appearance: "Appearance",
@@ -49,13 +48,6 @@ export const messages: Record<Locale, MessageTree> = {
       play: "Play",
       playHint: "Enter a lobby code and compete tonight",
       scanToJoin: "Scan to join",
-    },
-    hostPin: {
-      title: "Host access",
-      body: "Enter the admin PIN to open host controls. Players can't get in without it.",
-      serverError:
-        "Can't reach the game server. On Vercel, add Upstash Redis env vars. Locally, refresh after the dev server is running.",
-      aria: "Host trivia night",
     },
     hostModal: {
       title: "Set up the night",
@@ -257,7 +249,6 @@ export const messages: Record<Locale, MessageTree> = {
       continue: "Continuar",
       couldNotSave: "No se pudo guardar",
       couldNotLoadTeams: "No se pudieron cargar los equipos",
-      wrongPin: "PIN incorrecto",
     },
     theme: {
       appearance: "Apariencia",
@@ -283,13 +274,6 @@ export const messages: Record<Locale, MessageTree> = {
       play: "Jugar",
       playHint: "Ingresa un código de sala y compite esta noche",
       scanToJoin: "Escanea para unirte",
-    },
-    hostPin: {
-      title: "Acceso de anfitrión",
-      body: "Ingresa el PIN de admin para abrir los controles. Los jugadores no pueden entrar sin él.",
-      serverError:
-        "No se puede conectar al servidor. En Vercel, agrega las variables de Upstash Redis. Localmente, recarga cuando el servidor esté listo.",
-      aria: "Anfitrión de trivia",
     },
     hostModal: {
       title: "Prepara la noche",

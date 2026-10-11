@@ -14,7 +14,6 @@ type MemoryDb = {
   rooms: Map<string, unknown>;
   nights: unknown[];
   currentCode: string | null;
-  tokens: Map<string, number>;
 };
 
 function memory(): MemoryDb {
@@ -24,7 +23,6 @@ function memory(): MemoryDb {
       rooms: new Map(),
       nights: loadNightsFile(),
       currentCode: null,
-      tokens: new Map(),
     };
   }
   return g[MEMORY]!;
@@ -185,29 +183,4 @@ export async function setNightsData(nights: unknown[]) {
     return;
   }
   await redis().set("nights", nights);
-}
-
-export async function setHostToken(token: string, expiresAt: number) {
-  const ttlSec = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
-  if (!redisEnabled()) {
-    memory().tokens.set(token, expiresAt);
-    return;
-  }
-  await redis().set(`token:${token}`, expiresAt, { ex: ttlSec });
-}
-
-export async function getHostTokenExpiry(
-  token: string,
-): Promise<number | null> {
-  if (!redisEnabled()) return memory().tokens.get(token) ?? null;
-  const value = await redis().get<number>(`token:${token}`);
-  return typeof value === "number" ? value : null;
-}
-
-export async function deleteHostToken(token: string) {
-  if (!redisEnabled()) {
-    memory().tokens.delete(token);
-    return;
-  }
-  await redis().del(`token:${token}`);
 }

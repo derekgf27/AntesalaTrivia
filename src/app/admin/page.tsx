@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HostBreadcrumbs } from "@/components/HostBreadcrumbs";
 import { HostNightModal } from "@/components/HostNightModal";
@@ -8,7 +7,7 @@ import { useLocale } from "@/components/LocaleProvider";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
 import type { Question } from "@/lib/game/types";
-import { isHostUnlocked } from "@/lib/hostSession";
+import { unlockHostSession } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
 
 function blankQuestion(): Question {
@@ -41,7 +40,6 @@ function phaseLabel(
 
 export default function AdminPage() {
   const { t } = useLocale();
-  const router = useRouter();
   const {
     connected,
     adminState,
@@ -70,17 +68,12 @@ export default function AdminPage() {
   const [draftTimeLimit, setDraftTimeLimit] = useState(30);
   const [modalOpen, setModalOpen] = useState(true);
   const [atHostHome, setAtHostHome] = useState(true);
-  const [hostReady, setHostReady] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [confirmEndNight, setConfirmEndNight] = useState(false);
 
   useEffect(() => {
-    if (!isHostUnlocked()) {
-      router.replace("/");
-      return;
-    }
-    setHostReady(true);
-  }, [router]);
+    unlockHostSession();
+  }, []);
 
   useEffect(() => {
     if (adminState && !atHostHome) {
@@ -210,14 +203,6 @@ export default function AdminPage() {
     } finally {
       setBusy(false);
     }
-  }
-
-  if (!hostReady) {
-    return (
-      <main className="grid min-h-dvh place-items-center text-[var(--muted)]">
-        {t("admin.checking")}
-      </main>
-    );
   }
 
   if (!adminState || modalOpen) {

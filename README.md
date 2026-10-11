@@ -13,9 +13,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Home has two big buttons:
 - **Play** → player join flow
-- **Host** → asks for PIN (default `9271`, override with `ADMIN_PIN` env), then opens admin
-
-The PIN is checked on the **server** and exchanges for a short-lived host token. Players who open `/admin` without that token cannot create nights or run host controls.
+- **Host** → opens admin
 
 Locally, live games are stored in memory (and night history in `data/nights.json`). Restarting the dev server clears active lobbies unless Redis is configured.
 
@@ -27,14 +25,13 @@ This app uses Next.js API routes and short polling, so it can run on Vercel. Ver
 2. In the Vercel project, set:
    - `UPSTASH_REDIS_REST_URL` — the `https://….upstash.io` REST URL, not the `rediss://` connection string
    - `UPSTASH_REDIS_REST_TOKEN`
-   - `ADMIN_PIN` (optional; default `9271`)
 3. Redeploy.
 
-Vercel Marketplace also injects `KV_REST_API_URL` / `KV_REST_API_TOKEN` and sometimes only the `rediss://` URL (`REDIS_URL` or `KV_URL`). Those are accepted. Host stays disabled until Redis answers a ping, and a failed login shows the connection error instead of `fetch failed`.
+Vercel Marketplace also injects `KV_REST_API_URL` / `KV_REST_API_TOKEN` and sometimes only the `rediss://` URL (`REDIS_URL` or `KV_URL`). Those are accepted. If Redis cannot be reached, the error includes the cause instead of a bare `fetch failed`.
 
 ## How to run a night
 
-1. **Laptop** → Home → **Host** → enter PIN → create or resume a night.
+1. **Laptop** → Home → **Host** → create or resume a night.
 2. **TV (second screen)** → on admin, click **Open TV display** → drag that window to the TV → fullscreen (F11).
 3. **Guests** → Home → **Play** (or scan the QR) → create a team, join a team, or play solo.
 4. When at least one team has joined, hit **Start question 1**. The timer locks answers automatically; you press **Next question** between rounds.
