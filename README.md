@@ -27,7 +27,7 @@ This app uses Next.js API routes and short polling, so it can run on Vercel. Ver
    - `UPSTASH_REDIS_REST_TOKEN`
 3. Redeploy.
 
-Vercel Marketplace also injects `KV_REST_API_URL` / `KV_REST_API_TOKEN` and sometimes only the `rediss://` URL (`REDIS_URL` or `KV_URL`). Those are accepted. If Redis cannot be reached, the error includes the cause instead of a bare `fetch failed`.
+Vercel Marketplace also injects `KV_REST_API_URL` / `KV_REST_API_TOKEN` and sometimes only the `rediss://` URL (`REDIS_URL` or `KV_URL`). Those are accepted. If that Upstash host no longer exists, Host can still create a night in the current server's memory.
 
 ## How to run a night
 

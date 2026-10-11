@@ -4,7 +4,7 @@ import { Redis } from "@upstash/redis";
 import {
   REDIS_URL_HELP,
   hasRedisEnv,
-  publicErrorMessage,
+  isRedisNetworkError,
   resolveRedisCredentials,
 } from "./redisEnv";
 
@@ -50,15 +50,17 @@ function writeNightsFile(nights: unknown[]) {
   }
 }
 
+let redisState: "unknown" | "up" | "down" = "unknown";
+
 export function redisEnabled() {
-  return hasRedisEnv();
+  return hasRedisEnv() && redisState !== "down";
 }
 
 export function assertStoreReady() {
-  if (redisEnabled() && !resolveRedisCredentials()) {
+  if (hasRedisEnv() && !resolveRedisCredentials()) {
     throw new Error(REDIS_URL_HELP);
   }
-  if (process.env.VERCEL && !redisEnabled()) {
+  if (process.env.VERCEL && !hasRedisEnv()) {
     throw new Error(
       "Vercel needs Upstash Redis. In the Vercel project, add Storage → Upstash Redis (free), then redeploy. Expected env: UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or KV_REST_API_URL and KV_REST_API_TOKEN).",
     );
@@ -78,109 +80,134 @@ function redis() {
   });
 }
 
-const PING_OK_MS = 20_000;
-const PING_FAIL_MS = 5_000;
-let pingCache: { at: number; error: string | null } | null = null;
-
-/** Confirm Redis answers. Health uses this so the host button is not a false positive. */
-export async function assertRedisReachable() {
-  assertStoreReady();
-  if (!redisEnabled()) return;
-  const now = Date.now();
-  if (pingCache) {
-    const ttl = pingCache.error ? PING_FAIL_MS : PING_OK_MS;
-    if (now - pingCache.at < ttl) {
-      if (pingCache.error) throw new Error(pingCache.error);
-      return;
-    }
-  }
+/** Ping once. A deleted or unreachable database falls back to in-memory storage. */
+async function redisIsUp(): Promise<boolean> {
+  if (!hasRedisEnv() || !resolveRedisCredentials()) return false;
+  if (redisState === "down") return false;
+  if (redisState === "up") return true;
   try {
     const pong = await redis().ping();
-    if (pong !== "PONG") throw new Error("Upstash Redis did not respond to PING");
-    pingCache = { at: now, error: null };
+    redisState = pong === "PONG" ? "up" : "down";
   } catch (error) {
-    const message = publicErrorMessage(error);
-    pingCache = { at: now, error: message };
-    throw new Error(message);
+    if (!isRedisNetworkError(error)) throw error;
+    redisState = "down";
   }
+  return redisState === "up";
+}
+
+async function redisOp<T>(
+  fallback: () => Promise<T> | T,
+  op: (client: Redis) => Promise<T>,
+): Promise<T> {
+  if (!(await redisIsUp())) return await fallback();
+  try {
+    return await op(redis());
+  } catch (error) {
+    if (!isRedisNetworkError(error)) throw error;
+    redisState = "down";
+    return await fallback();
+  }
+}
+
+/** Confirm the store can be used. An unreachable Upstash host does not block the night. */
+export async function assertRedisReachable() {
+  assertStoreReady();
+  await redisIsUp();
 }
 
 export async function withLock<T>(
   key: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (!redisEnabled()) return fn();
-  const r = redis();
-  const lockKey = `lock:${key}`;
-  for (let i = 0; i < 20; i++) {
-    const ok = await r.set(lockKey, "1", { nx: true, px: 4000 });
-    if (ok) {
-      try {
-        return await fn();
-      } finally {
-        await r.del(lockKey);
+  if (!(await redisIsUp())) return fn();
+  try {
+    const r = redis();
+    const lockKey = `lock:${key}`;
+    for (let i = 0; i < 20; i++) {
+      const ok = await r.set(lockKey, "1", { nx: true, px: 4000 });
+      if (ok) {
+        try {
+          return await fn();
+        } finally {
+          await r.del(lockKey);
+        }
       }
+      await new Promise((res) => setTimeout(res, 40 + i * 15));
     }
-    await new Promise((res) => setTimeout(res, 40 + i * 15));
+    throw new Error("Game is busy — try again");
+  } catch (error) {
+    if (!isRedisNetworkError(error)) throw error;
+    redisState = "down";
+    return fn();
   }
-  throw new Error("Game is busy — try again");
 }
 
 export async function getRoomData<T>(code: string): Promise<T | null> {
   const c = code.toUpperCase().trim();
   if (!c) return null;
-  if (!redisEnabled()) return (memory().rooms.get(c) as T) ?? null;
-  const value = await redis().get<T>(`room:${c}`);
-  return value ?? null;
+  return redisOp(
+    () => (memory().rooms.get(c) as T) ?? null,
+    (client) => client.get<T>(`room:${c}`).then((value) => value ?? null),
+  );
 }
 
 export async function setRoomData(code: string, data: unknown) {
   const c = code.toUpperCase().trim();
   if (!c) return;
-  if (!redisEnabled()) {
-    memory().rooms.set(c, data);
-    return;
-  }
-  await redis().set(`room:${c}`, data);
+  await redisOp(
+    () => {
+      memory().rooms.set(c, data);
+    },
+    (client) => client.set(`room:${c}`, data),
+  );
 }
 
 export async function deleteRoomData(code: string) {
   const c = code.toUpperCase().trim();
   if (!c) return;
-  if (!redisEnabled()) {
-    memory().rooms.delete(c);
-    return;
-  }
-  await redis().del(`room:${c}`);
+  await redisOp(
+    () => {
+      memory().rooms.delete(c);
+    },
+    (client) => client.del(`room:${c}`),
+  );
 }
 
 export async function getCurrentCode(): Promise<string | null> {
-  if (!redisEnabled()) return memory().currentCode;
-  const value = await redis().get<string>("currentCode");
-  return value || null;
+  return redisOp(
+    () => memory().currentCode,
+    async (client) => (await client.get<string>("currentCode")) || null,
+  );
 }
 
 export async function setCurrentCode(code: string | null) {
-  if (!redisEnabled()) {
-    memory().currentCode = code;
-    return;
-  }
-  const r = redis();
-  if (!code) await r.del("currentCode");
-  else await r.set("currentCode", code);
+  await redisOp(
+    () => {
+      memory().currentCode = code;
+    },
+    async (client) => {
+      if (!code) await client.del("currentCode");
+      else await client.set("currentCode", code);
+    },
+  );
 }
 
 export async function getNightsData<T>(): Promise<T[]> {
-  if (!redisEnabled()) return memory().nights as T[];
-  const value = await redis().get<T[]>("nights");
-  return Array.isArray(value) ? value : [];
+  return redisOp(
+    () => memory().nights as T[],
+    async (client) => {
+      const value = await client.get<T[]>("nights");
+      return Array.isArray(value) ? value : [];
+    },
+  );
 }
 
 export async function setNightsData(nights: unknown[]) {
-  if (!redisEnabled()) {
-    memory().nights = nights;
-    writeNightsFile(nights);
-    return;
-  }
-  await redis().set("nights", nights);
+  await redisOp(
+    () => {
+      memory().nights = nights;
+      writeNightsFile(nights);
+    },
+    (client) => client.set("nights", nights),
+  );
 }
