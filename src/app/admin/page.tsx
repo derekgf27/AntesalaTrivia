@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { HostBreadcrumbs } from "@/components/HostBreadcrumbs";
 import { HostNightModal } from "@/components/HostNightModal";
 import { HostPinModal } from "@/components/HostPinModal";
+import { QuestionEditor } from "@/components/QuestionEditor";
 import { useLocale } from "@/components/LocaleProvider";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
+import { tiedLeaders } from "@/lib/game/tiebreak";
 import type { Question } from "@/lib/game/types";
 import { isHostUnlocked } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
@@ -59,6 +61,10 @@ export default function AdminPage() {
     kickTeam,
     adjustScore,
     setQuestions,
+    setShowScores,
+    returnToLobby,
+    restartNight,
+    startTiebreak,
     endGame,
   } = useGameState();
 
@@ -67,11 +73,14 @@ export default function AdminPage() {
   const [editing, setEditing] = useState(false);
   const [questionsOpen, setQuestionsOpen] = useState(true);
   const [draftQuestions, setDraftQuestions] = useState<Question[]>(SAMPLE_QUESTIONS);
+  const [draftSpare, setDraftSpare] = useState<Question>(blankQuestion);
   const [draftTimeLimit, setDraftTimeLimit] = useState(30);
   const [modalOpen, setModalOpen] = useState(true);
   const [atHostHome, setAtHostHome] = useState(true);
-  const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [confirmEndNight, setConfirmEndNight] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   useEffect(() => {
     setHostReady(isHostUnlocked());
@@ -90,6 +99,7 @@ export default function AdminPage() {
     } else {
       setQuestionsOpen(false);
       setEditing(false);
+      setConfirmDiscard(false);
     }
   }, [adminState?.phase, adminState]);
 
@@ -186,25 +196,108 @@ export default function AdminPage() {
     }
   }
 
+  const draftDirty = useMemo(() => {
+    if (!adminState || !editing) return false;
+    const signature = (questions: Question[], limit: number) =>
+      JSON.stringify(
+        questions.map((q) => ({
+          id: q.id,
+          text: q.text.trim(),
+          options: q.options.map((option) => option.trim()),
+          correctIndex: q.correctIndex,
+          timeLimitSec: limit,
+        })),
+      );
+    const spareSignature = (question: Question | null | undefined) => {
+      const text = question?.text.trim() ?? "";
+      const options = question?.options.map((option) => option.trim()) ?? [
+        "",
+        "",
+        "",
+        "",
+      ];
+      if (!text && options.every((option) => !option)) return "";
+      return JSON.stringify({
+        text,
+        options,
+        correctIndex: question?.correctIndex ?? 0,
+      });
+    };
+    return (
+      draftTimeLimit !== (adminState.timeLimitSec || 30) ||
+      signature(draftQuestions, draftTimeLimit) !==
+        signature(adminState.questions, adminState.timeLimitSec || 30) ||
+      spareSignature(draftSpare) !== spareSignature(adminState.spareQuestion)
+    );
+  }, [adminState, draftQuestions, draftSpare, draftTimeLimit, editing]);
+
+  function cleanedDraft() {
+    const incomplete = draftQuestions.some(
+      (q) => !q.text.trim() || q.options.some((option) => !option.trim()),
+    );
+    if (incomplete) throw new Error(t("admin.finishQuestions"));
+    return draftQuestions.map((q) => ({
+      ...q,
+      text: q.text.trim(),
+      options: q.options.map((option) => option.trim()) as Question["options"],
+      timeLimitSec: draftTimeLimit,
+    }));
+  }
+
+  function cleanedSpare(): Question | null {
+    const text = draftSpare.text.trim();
+    const options = draftSpare.options.map((option) => option.trim());
+    const empty = !text && options.every((option) => !option);
+    if (empty) return null;
+    if (!text || options.some((option) => !option)) {
+      throw new Error(t("admin.finishTiebreaker"));
+    }
+    return {
+      ...draftSpare,
+      text,
+      options: options as Question["options"],
+      timeLimitSec: draftTimeLimit,
+    };
+  }
+
   async function saveQuestions() {
     setBusy(true);
+    setError(null);
     try {
-      const cleaned = draftQuestions
-        .map((q) => ({
-          ...q,
-          text: q.text.trim(),
-          options: q.options.map((o) => o.trim()) as Question["options"],
-          timeLimitSec: draftTimeLimit,
-        }))
-        .filter((q) => q.text && q.options.every(Boolean));
-      if (!cleaned.length) throw new Error(t("admin.needQuestion"));
-      await setQuestions(cleaned, draftTimeLimit);
+      await setQuestions(cleanedDraft(), draftTimeLimit, cleanedSpare());
+      setConfirmDiscard(false);
       setEditing(false);
     } catch (e) {
-      alert(e instanceof Error ? e.message : t("common.couldNotSave"));
+      setError(e instanceof Error ? e.message : t("common.couldNotSave"));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleStart() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (editing && draftDirty) {
+        await setQuestions(cleanedDraft(), draftTimeLimit, cleanedSpare());
+        setConfirmDiscard(false);
+        setEditing(false);
+      }
+      await startQuestion();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("common.couldNotSave"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function requestCloseEditor() {
+    if (!draftDirty) {
+      setConfirmDiscard(false);
+      setEditing(false);
+      return;
+    }
+    setConfirmDiscard(true);
   }
 
   if (!hostReady) {
@@ -247,45 +340,166 @@ export default function AdminPage() {
   const phase = adminState.phase;
   const q = adminState.question;
   const moreAfterReveal =
-    phase === "reveal" && adminState.questionIndex + 1 < adminState.questionCount;
-  const isLastReveal =
-    phase === "reveal" && adminState.questionIndex + 1 >= adminState.questionCount;
+    phase === "reveal" &&
+    !adminState.tiebreak &&
+    adminState.questionIndex + 1 < adminState.questionCount;
   const answeredCount = adminState.answeredTeamIds.length;
   const teamCount = adminState.teams.length;
   const connectedCount = adminState.connectedTeamIds?.length ?? 0;
   const liveControls =
     phase === "question" || phase === "locked" || phase === "reveal";
+  const regularDone =
+    adminState.questionIndex >= 0 &&
+    adminState.questionIndex + 1 >= adminState.questionCount;
+  const firstPlaceTied = tiedLeaders(adminState.teams).length >= 2;
+  const offerTiebreak =
+    !adminState.tiebreak &&
+    regularDone &&
+    firstPlaceTied &&
+    Boolean(adminState.spareQuestion) &&
+    (phase === "reveal" || phase === "lobby");
+  const showFinal =
+    phase === "reveal" && regularDone && !offerTiebreak;
+  const nextQuestionNumber = adminState.questionIndex + 2;
+  const questionTotal = editing
+    ? draftQuestions.length
+    : adminState.questionCount;
 
   return (
-    <main className="mx-auto grid min-h-dvh w-full max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[1.2fr_0.8fr]">
-      <section className="flex flex-col gap-5">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            {hostCrumbs}
-            <p className="mt-3 text-sm uppercase tracking-[0.2em] text-[var(--accent)]">
-              {t("admin.control")}
-            </p>
-            <h1 className="font-display text-3xl sm:text-4xl">{adminState.title}</h1>
-            <p className="text-sm text-[var(--muted)]">
-              {teamCount === 1
-                ? t("admin.teamOne", { count: teamCount })
-                : t("admin.teamMany", { count: teamCount })}
-              {teamCount > 0
-                ? t("admin.connected", { count: connectedCount })
-                : ""}
-            </p>
-          </div>
-          <div className="card-panel flex items-center gap-4 px-4 py-3">
-            <div className="text-right">
-              <p className="text-xs text-[var(--muted)]">{t("admin.lobbyCode")}</p>
-              <p className="font-code text-3xl">{adminState.code}</p>
-            </div>
-            <div className="h-10 w-px bg-[var(--line)]" aria-hidden />
-            <p className="font-display text-xl capitalize text-[var(--accent)]">
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          {hostCrumbs}
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h1 className="font-display text-3xl">{adminState.title}</h1>
+            <p className="font-code text-4xl text-[var(--accent)]">{adminState.code}</p>
+            <p className="text-sm uppercase tracking-[0.16em] text-[var(--accent)]">
               {phaseLabel(phase, t)}
             </p>
           </div>
-        </header>
+          <p className="text-sm text-[var(--muted)]">
+            {teamCount === 1
+              ? t("admin.teamOne", { count: teamCount })
+              : t("admin.teamMany", { count: teamCount })}
+            {teamCount > 0
+              ? t("admin.connected", { count: connectedCount })
+              : ""}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {displayUrl && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() =>
+                window.open(displayUrl, "antesala-tv", "noopener,noreferrer")
+              }
+            >
+              {t("admin.openTv")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={busy}
+            onClick={() =>
+              setShowScores(!adminState.showScores).catch(() => undefined)
+            }
+          >
+            {adminState.showScores
+              ? t("admin.hideScoresOnTv")
+              : t("admin.showScoresOnTv")}
+          </button>
+          {phase !== "finished" && !editing && !confirmEndNight && !confirmRestart && (
+            <>
+              <button
+                type="button"
+                className="btn btn-warning"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmEndNight(false);
+                  setConfirmRestart(true);
+                }}
+              >
+                {t("admin.restartNight")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmRestart(false);
+                  setConfirmEndNight(true);
+                }}
+              >
+                {t("admin.endNight")}
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+      {confirmEndNight && phase !== "finished" && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-[var(--muted)]">
+            {t("admin.endConfirm")}
+          </p>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={busy}
+            onClick={() => {
+              endGame()
+                .then(() => setConfirmEndNight(false))
+                .catch(() => undefined);
+            }}
+          >
+            {t("admin.yesEnd")}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={busy}
+            onClick={() => setConfirmEndNight(false)}
+          >
+            {t("common.cancel")}
+          </button>
+        </div>
+      )}
+      {confirmRestart && phase !== "finished" && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-[var(--muted)]">
+            {t("admin.restartConfirm")}
+          </p>
+          <button
+            type="button"
+            className="btn btn-warning"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              restartNight()
+                .then(() => {
+                  setConfirmRestart(false);
+                  setEditing(false);
+                  setConfirmDiscard(false);
+                })
+                .catch((e) =>
+                  setError(e instanceof Error ? e.message : t("admin.couldNotRestart")),
+                )
+                .finally(() => setBusy(false));
+            }}
+          >
+            {t("admin.yesRestart")}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={busy}
+            onClick={() => setConfirmRestart(false)}
+          >
+            {t("common.cancel")}
+          </button>
+        </div>
+      )}
 
         {error && (
           <p className="danger-soft-panel flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-[var(--danger)]">
@@ -300,21 +514,58 @@ export default function AdminPage() {
           </p>
         )}
 
-        <div
-          className={`card-panel flex flex-wrap items-center gap-3 p-4 ${
-            liveControls ? "ring-1 ring-[var(--accent)]" : ""
-          }`}
-        >
-          {phase === "lobby" && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy}
-              onClick={() => startQuestion().catch(() => undefined)}
-            >
-              {t("admin.startQ1")}
-            </button>
-          )}
+        {phase === "lobby" && !editing && (
+          <div className="card-panel flex w-fit max-w-full flex-wrap items-center gap-4 p-3">
+            <div className="min-w-0">
+              <h2 className="font-display text-xl">{t("admin.teamsJoined")}</h2>
+              {adminState.teams.length === 0 ? (
+                <p className="mt-1 text-sm text-[var(--muted)]">{t("admin.noTeams")}</p>
+              ) : (
+                <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                  {adminState.teams.map((team) => (
+                    <li key={team.id} className="truncate text-lg font-semibold">
+                      {team.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {!regularDone && (
+              <button
+                type="button"
+                className={teamCount > 0 ? "btn btn-primary" : "btn btn-ghost"}
+                disabled={busy}
+                onClick={() => {
+                  handleStart().catch(() => undefined);
+                }}
+              >
+                {t("admin.startQuestionOf", {
+                  n: nextQuestionNumber,
+                  total: questionTotal,
+                })}
+              </button>
+            )}
+            {offerTiebreak && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() =>
+                  startTiebreak().catch((e) =>
+                    setError(
+                      e instanceof Error ? e.message : t("admin.couldNotRestart"),
+                    ),
+                  )
+                }
+              >
+                {t("admin.runTiebreak")}
+              </button>
+            )}
+          </div>
+        )}
+
+        {liveControls && (
+        <div className="card-panel flex flex-wrap items-center gap-3 p-4 ring-1 ring-[var(--accent)]">
           {phase === "question" && (
             <>
               {adminState.timerPaused ? (
@@ -372,6 +623,16 @@ export default function AdminPage() {
               </button>
             </>
           )}
+          {liveControls && !confirmStop && (
+            <button
+              type="button"
+              className="btn btn-warning"
+              disabled={busy}
+              onClick={() => setConfirmStop(true)}
+            >
+              {t("admin.stopAndEdit")}
+            </button>
+          )}
           {phase === "locked" && (
             <button
               type="button"
@@ -382,7 +643,7 @@ export default function AdminPage() {
               {t("admin.revealNow")}
             </button>
           )}
-          {moreAfterReveal && (
+          {moreAfterReveal && !adminState.tiebreak && (
             <button
               type="button"
               className="btn btn-primary"
@@ -392,7 +653,21 @@ export default function AdminPage() {
               {t("admin.nextQuestion")}
             </button>
           )}
-          {isLastReveal && (
+          {offerTiebreak && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() =>
+                startTiebreak().catch((e) =>
+                  setError(e instanceof Error ? e.message : t("admin.couldNotRestart")),
+                )
+              }
+            >
+              {t("admin.runTiebreak")}
+            </button>
+          )}
+          {showFinal && (
             <button
               type="button"
               className="btn btn-primary"
@@ -401,6 +676,9 @@ export default function AdminPage() {
             >
               {t("admin.finalLeaderboard")}
             </button>
+          )}
+          {showFinal && firstPlaceTied && (
+            <p className="text-sm text-[var(--muted)]">{t("admin.stillTied")}</p>
           )}
           <div className="ml-auto flex flex-col items-end gap-1">
             {(phase === "question" || phase === "locked") && (
@@ -412,12 +690,54 @@ export default function AdminPage() {
               </p>
             )}
             <span className="text-sm text-[var(--muted)] capitalize">
-              {phase !== "lobby" && phase !== "finished"
-                ? `Q${adminState.questionIndex + 1}/${adminState.questionCount}`
-                : ""}
+              {adminState.tiebreak
+                ? t("admin.tiebreaker")
+                : `Q${adminState.questionIndex + 1}/${adminState.questionCount}`}
             </span>
           </div>
         </div>
+        )}
+
+        {confirmStop && liveControls && (
+          <div className="card-panel space-y-3 p-4">
+            <p className="text-sm text-[var(--muted)]">{t("admin.stopConfirm")}</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  returnToLobby()
+                    .then(() => {
+                      setConfirmStop(false);
+                      setDraftQuestions(
+                        adminState.questions.length
+                          ? adminState.questions
+                          : [blankQuestion()],
+                      );
+                      setDraftSpare(adminState.spareQuestion ?? blankQuestion());
+                      setDraftTimeLimit(adminState.timeLimitSec || 30);
+                      setQuestionsOpen(true);
+                      setEditing(true);
+                    })
+                    .catch(() => undefined)
+                    .finally(() => setBusy(false));
+                }}
+              >
+                {t("admin.yesStop")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={() => setConfirmStop(false)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        )}
 
         {(phase === "question" || phase === "locked" || phase === "reveal") &&
           q && (
@@ -433,7 +753,9 @@ export default function AdminPage() {
               ) : null}
               <div className="flex-1">
                 <p className="text-sm text-[var(--muted)]">
-                  {t("admin.questionN", { n: adminState.questionIndex + 1 })}
+                  {adminState.tiebreak
+                    ? t("admin.tiebreaker")
+                    : t("admin.questionN", { n: adminState.questionIndex + 1 })}
                   {phase === "locked"
                     ? t("admin.questionLocked")
                     : adminState.timerPaused
@@ -488,8 +810,8 @@ export default function AdminPage() {
           </div>
         )}
 
-        <div className="card-panel p-5">
-          <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="card-panel p-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
               className="flex items-center gap-3 text-left"
@@ -501,213 +823,124 @@ export default function AdminPage() {
                 {questionsOpen ? t("admin.hide") : t("admin.show")}
               </span>
             </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {!editing && (
+                <p className="text-sm text-[var(--muted)]">
+                  {t("admin.answerTime", { sec: adminState.timeLimitSec })}
+                </p>
+              )}
             {phase !== "finished" && questionsOpen && (
               <button
                 type="button"
                 className="btn btn-ghost"
                 onClick={() => {
+                  if (editing) {
+                    requestCloseEditor();
+                    return;
+                  }
                   setDraftQuestions(
                     adminState.questions.length
                       ? adminState.questions
                       : [blankQuestion()],
                   );
+                  setDraftSpare(adminState.spareQuestion ?? blankQuestion());
                   setDraftTimeLimit(adminState.timeLimitSec || 30);
-                  setEditing((v) => !v);
+                  setConfirmDiscard(false);
+                  setEditing(true);
                 }}
               >
                 {editing ? t("admin.closeEditor") : t("admin.edit")}
               </button>
             )}
+            </div>
           </div>
+          {confirmDiscard && editing && (
+            <div
+              className="mb-3 flex flex-wrap items-center gap-3 rounded-2xl bg-[var(--accent-soft)] px-4 py-3 ring-1 ring-[var(--warning)]"
+              role="alertdialog"
+              aria-labelledby="discard-edits-title"
+            >
+              <p id="discard-edits-title" className="min-w-0 flex-1 text-sm">
+                {t("admin.discardEdits")}
+              </p>
+              <button
+                type="button"
+                className="btn btn-warning"
+                onClick={() => {
+                  setConfirmDiscard(false);
+                  setEditing(false);
+                }}
+              >
+                {t("admin.discardChanges")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setConfirmDiscard(false)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          )}
           {questionsOpen &&
             (!editing ? (
-              <div className="space-y-3">
-                <p className="text-sm text-[var(--muted)]">
-                  {t("admin.answerTime", { sec: adminState.timeLimitSec })}
-                </p>
-                <ol className="space-y-2 text-sm text-[var(--muted)]">
+              <div>
+                <ol className="grid gap-x-8 gap-y-1 text-sm text-[var(--muted)] sm:grid-cols-2">
                   {adminState.questions.map((item, idx) => (
-                    <li key={item.id}>
+                    <li key={item.id} className="min-w-0">
                       {idx + 1}. {item.text}
                     </li>
                   ))}
                 </ol>
+                <p className="mt-3 text-sm text-[var(--muted)]">
+                  {adminState.spareQuestion
+                    ? t("admin.spareReady", { text: adminState.spareQuestion.text })
+                    : t("admin.noTiebreaker")}
+                </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                <label className="flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
-                  {t("admin.answerTimeLabel")}
-                  <input
-                    className="input max-w-28"
-                    type="number"
-                    min={5}
-                    max={180}
-                    value={draftTimeLimit}
-                    onChange={(e) =>
-                      setDraftTimeLimit(Number(e.target.value) || 30)
-                    }
-                  />
-                </label>
-                {draftQuestions.map((item, qi) => (
-                  <div
-                    key={item.id}
-                    className="space-y-2 rounded-xl bg-[var(--surface-2)] p-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm text-[var(--muted)]">
-                        {t("admin.questionN", { n: qi + 1 })}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        <button
-                          type="button"
-                          className="btn btn-ghost px-3 py-1.5 text-xs"
-                          disabled={qi === 0}
-                          onClick={() => {
-                            if (qi === 0) return;
-                            const next = [...draftQuestions];
-                            [next[qi - 1], next[qi]] = [next[qi], next[qi - 1]];
-                            setDraftQuestions(next);
-                          }}
-                        >
-                          {t("admin.up")}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost px-3 py-1.5 text-xs"
-                          disabled={qi === draftQuestions.length - 1}
-                          onClick={() => {
-                            if (qi >= draftQuestions.length - 1) return;
-                            const next = [...draftQuestions];
-                            [next[qi], next[qi + 1]] = [next[qi + 1], next[qi]];
-                            setDraftQuestions(next);
-                          }}
-                        >
-                          {t("admin.down")}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost px-3 py-1.5 text-xs"
-                          onClick={() => {
-                            const copy: Question = {
-                              ...item,
-                              id: crypto.randomUUID(),
-                              options: [...item.options] as Question["options"],
-                            };
-                            const next = [...draftQuestions];
-                            next.splice(qi + 1, 0, copy);
-                            setDraftQuestions(next);
-                          }}
-                        >
-                          {t("admin.duplicate")}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost px-3 py-1.5 text-xs text-[var(--danger)]"
-                          disabled={draftQuestions.length <= 1}
-                          onClick={() => {
-                            if (draftQuestions.length <= 1) return;
-                            setDraftQuestions((list) =>
-                              list.filter((_, i) => i !== qi),
-                            );
-                          }}
-                        >
-                          {t("admin.remove")}
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      className="input"
-                      value={item.text}
-                      onChange={(e) => {
-                        const next = [...draftQuestions];
-                        next[qi] = { ...item, text: e.target.value };
-                        setDraftQuestions(next);
-                      }}
-                    />
-                    {item.options.map((opt, oi) => (
-                      <div key={oi} className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          name={`correct-${item.id}`}
-                          checked={item.correctIndex === oi}
-                          onChange={() => {
-                            const next = [...draftQuestions];
-                            next[qi] = {
-                              ...item,
-                              correctIndex: oi as 0 | 1 | 2 | 3,
-                            };
-                            setDraftQuestions(next);
-                          }}
-                        />
-                        <input
-                          className="input"
-                          value={opt}
-                          onChange={(e) => {
-                            const next = [...draftQuestions];
-                            const options = [...item.options] as Question["options"];
-                            options[oi] = e.target.value;
-                            next[qi] = { ...item, options };
-                            setDraftQuestions(next);
-                          }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ))}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() =>
-                      setDraftQuestions((qlist) => [...qlist, blankQuestion()])
-                    }
-                  >
-                    {t("admin.addQuestion")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={busy}
-                    onClick={saveQuestions}
-                  >
-                    {t("admin.saveQuestions")}
-                  </button>
-                </div>
-              </div>
+              <QuestionEditor
+                questions={draftQuestions}
+                timeLimitSec={draftTimeLimit}
+                busy={busy}
+                initialIndex={Math.min(
+                  Math.max(0, adminState.questionIndex + 1),
+                  Math.max(0, draftQuestions.length - 1),
+                )}
+                lockedThrough={adminState.questionIndex}
+                onChange={setDraftQuestions}
+                onTimeLimit={setDraftTimeLimit}
+                onSave={saveQuestions}
+                spare={draftSpare}
+                onSpare={setDraftSpare}
+              />
             ))}
-        </div>
-      </section>
-
-      <aside className="flex flex-col gap-5">
-        <div className="card-panel p-5">
-          <h3 className="font-display text-xl mb-3">{t("admin.tvDisplay")}</h3>
-          {displayUrl && (
+          {editing && phase === "lobby" && (
             <button
               type="button"
-              className="btn btn-primary w-full"
-              onClick={() =>
-                window.open(displayUrl, "antesala-tv", "noopener,noreferrer")
-              }
+              className="btn btn-ghost mt-4"
+              disabled={busy}
+              onClick={() => {
+                handleStart().catch(() => undefined);
+              }}
             >
-              {t("admin.openTv")}
+              {draftDirty
+                ? t("admin.saveAndStart", {
+                    n: nextQuestionNumber,
+                    total: questionTotal,
+                  })
+                : t("admin.startQuestionOf", {
+                    n: nextQuestionNumber,
+                    total: questionTotal,
+                  })}
             </button>
           )}
         </div>
 
-        <div className="card-panel p-5">
-          <button
-            type="button"
-            className="mb-3 flex w-full items-center justify-between gap-3 text-left"
-            onClick={() => setShowLeaderboard((v) => !v)}
-            aria-expanded={showLeaderboard}
-          >
-            <h3 className="font-display text-xl">{t("admin.lobbyScores")}</h3>
-            <span className="text-sm text-[var(--muted)]">
-              {showLeaderboard ? t("admin.hide") : t("admin.show")}
-            </span>
-          </button>
-          {showLeaderboard && (
-            <ul className="space-y-3">
+      {teamCount > 0 && (
+      <aside className="card-panel p-4">
+          <h3 className="font-display mb-3 text-xl">{t("admin.lobbyScores")}</h3>
+          <ul className="space-y-3">
               {adminState.teams.length === 0 ? (
                 <li className="text-sm text-[var(--muted)]">
                   {t("admin.noTeams")}
@@ -790,52 +1023,8 @@ export default function AdminPage() {
                 })
               )}
             </ul>
-          )}
-        </div>
-
-        {phase !== "finished" && (
-          <div className="mt-auto rounded-2xl border border-[var(--line)] p-4">
-            {!confirmEndNight ? (
-              <button
-                type="button"
-                className="btn btn-danger w-full"
-                disabled={busy}
-                onClick={() => setConfirmEndNight(true)}
-              >
-                {t("admin.endNight")}
-              </button>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-[var(--muted)]">
-                  {t("admin.endConfirm")}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    disabled={busy}
-                    onClick={() => {
-                      endGame()
-                        .then(() => setConfirmEndNight(false))
-                        .catch(() => undefined);
-                    }}
-                  >
-                    {t("admin.yesEnd")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    disabled={busy}
-                    onClick={() => setConfirmEndNight(false)}
-                  >
-                    {t("common.cancel")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </aside>
+      )}
     </main>
   );
 }

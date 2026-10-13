@@ -19,8 +19,6 @@ function DisplayInner() {
   const [code, setCode] = useState(clampLobbyCode(preset));
   const [joined, setJoined] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [showQr, setShowQr] = useState(true);
-  const [showLeaderboard, setShowLeaderboard] = useState(true);
 
   useEffect(() => {
     if (preset) return;
@@ -85,8 +83,9 @@ function DisplayInner() {
     state.phase === "question" ||
     state.phase === "locked" ||
     state.phase === "reveal";
-  const progressLabel =
-    inPlay && state.questionCount > 0
+  const progressLabel = state.tiebreak
+    ? t("display.tiebreaker")
+    : inPlay && state.questionCount > 0
       ? `Q${state.questionIndex + 1} / ${state.questionCount}`
       : null;
   const correctOpt =
@@ -103,14 +102,8 @@ function DisplayInner() {
       : t("display.teamsReadyPlural", { count: state.teams.length });
 
   return (
-    <main className="flex min-h-dvh flex-col px-8 pt-5 pb-8 lg:px-14 lg:pt-6 lg:pb-10">
-      <header
-        className={`mb-6 grid items-start gap-4 lg:mb-8 ${
-          inPlay
-            ? "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
-            : "flex justify-between"
-        }`}
-      >
+    <main className="flex min-h-dvh flex-col px-8 py-8 lg:px-14 lg:py-10">
+      <header className="flex items-start justify-between gap-6">
         <div className="flex items-center gap-5">
           <Image
             src="/logo.jpg"
@@ -131,160 +124,166 @@ function DisplayInner() {
             )}
           </div>
         </div>
-
-        {state.phase === "question" && q ? (
-          <div className="justify-self-center self-start pt-0">
-            <TimerRing
-              timerEndsAt={state.timerEndsAt}
-              paused={state.timerPaused}
-              pausedRemainingMs={state.timerPausedRemainingMs}
-              totalSec={state.timeLimitSec}
-              large
-            />
-          </div>
-        ) : inPlay ? (
-          <div />
-        ) : null}
-
-        {state.phase === "lobby" && (
-          <div className="ml-auto flex flex-col items-end gap-4">
-            <div className="flex items-center gap-6 rounded-2xl bg-[var(--navy)] px-6 py-4 ring-1 ring-[var(--line)] sm:gap-8 sm:px-8">
-              <div className="text-right">
-                <p className="text-xs uppercase tracking-[0.28em] text-[var(--accent)] sm:text-sm">
-                  {t("display.lobbyOpen")}
-                </p>
-                <p className="font-display mt-2 text-lg text-[var(--cream)] sm:text-xl">
-                  {teamCountLabel}
-                </p>
-              </div>
-              <p className="font-code text-5xl text-[var(--accent)] sm:text-6xl lg:text-7xl">
-                {state.code}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="text-sm uppercase tracking-[0.2em] text-[var(--muted)] transition hover:text-[var(--text)]"
-              onClick={() => setShowQr((v) => !v)}
-              aria-expanded={showQr}
-            >
-              {showQr ? t("display.hideQr") : t("display.showQr")}
-            </button>
-            {showQr && joinUrl && (
-              <div className="rounded-2xl bg-white p-4">
-                <QRCodeSVG value={joinUrl} size={180} />
-              </div>
-            )}
-          </div>
-        )}
-
         {inPlay && (
-          <div className="relative z-20 justify-self-end">
-            <div className="text-right">
-              <p className="text-sm uppercase tracking-[0.2em] text-[var(--muted)]">
-                {t("display.lobbyCode")}
-              </p>
-              <p className="font-code mt-1 text-5xl text-[var(--accent)] lg:text-6xl">
-                {state.code}
-              </p>
-            </div>
-            {/* Overlay so expand/collapse never pushes the question block */}
-            <div className="absolute right-0 top-full mt-4 w-[min(calc(100vw-4rem),22rem)]">
-              <div className="card-panel p-5 shadow-2xl">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between gap-3 text-left"
-                  onClick={() => setShowLeaderboard((v) => !v)}
-                  aria-expanded={showLeaderboard}
-                >
-                  <h2 className="font-display text-2xl">{t("display.leaderboard")}</h2>
-                  <span className="text-sm text-[var(--muted)]">
-                    {showLeaderboard ? t("display.hide") : t("display.show")}
-                  </span>
-                </button>
-                {showLeaderboard && (
-                  <div className="mt-4 max-h-[min(50dvh,28rem)] overflow-y-auto">
-                    <Leaderboard teams={state.teams} />
-                  </div>
-                )}
-              </div>
-            </div>
+          <div className="text-right">
+            <p className="text-sm uppercase tracking-[0.2em] text-[var(--muted)]">
+              {t("display.lobbyCode")}
+            </p>
+            <p className="font-code mt-1 text-4xl text-[var(--accent)] lg:text-5xl">
+              {state.code}
+            </p>
           </div>
         )}
       </header>
 
       {state.phase === "lobby" && (
-        <section className="flex flex-1 flex-col items-center justify-center text-center">
-          <h1 className="font-display text-5xl leading-tight sm:text-7xl">
-            {t("display.startingSoon")}
-          </h1>
-          <p className="mt-4 max-w-2xl text-2xl text-[var(--muted)]">
-            {t("display.joinHint")}
-          </p>
+        <section className="mt-8 grid flex-1 items-center gap-10 lg:grid-cols-[auto_1fr] lg:gap-16">
+          <div className="flex flex-col items-start gap-6">
+            <div>
+              <p className="text-sm uppercase tracking-[0.28em] text-[var(--accent)]">
+                {t("display.lobbyOpen")}
+              </p>
+              <p className="font-code mt-3 text-7xl text-[var(--accent)] sm:text-8xl">
+                {state.code}
+              </p>
+              <p className="mt-3 text-2xl text-[var(--cream)]">{teamCountLabel}</p>
+            </div>
+            {joinUrl && (
+              <div className="rounded-2xl bg-white p-4">
+                <QRCodeSVG value={joinUrl} size={220} />
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            {state.teams.length === 0 ? (
+              <div>
+                <h1 className="font-display text-5xl leading-tight sm:text-7xl">
+                  {t("display.waitingTeams")}
+                </h1>
+                <p className="mt-4 max-w-2xl text-2xl text-[var(--muted)]">
+                  {t("display.joinHint")}
+                </p>
+              </div>
+            ) : (
+              <div>
+                <h1 className="font-display text-4xl sm:text-5xl">
+                  {t("display.startingSoon")}
+                </h1>
+                <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+                  {state.teams.map((team) => (
+                    <li
+                      key={team.id}
+                      className="font-display text-3xl leading-tight sm:text-4xl"
+                    >
+                      {team.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </section>
       )}
 
       {inPlay && q && (
-        <section className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center pt-2 text-center">
-          {state.phase === "locked" && (
-            <p className="mb-5 font-display text-3xl uppercase tracking-[0.12em] text-[var(--accent)] sm:text-4xl">
-              {t("display.answersLocked")}
-            </p>
-          )}
-          {state.phase === "reveal" && correctOpt && correctLetter && (
-            <div className="mb-7 w-full rounded-3xl bg-[var(--accent-soft)] px-7 py-5 ring-2 ring-[var(--accent)]">
-              <p className="text-sm uppercase tracking-[0.25em] text-[var(--accent)]">
-                {t("display.correctAnswer")}
+        <section
+          className={`mt-6 grid flex-1 items-center gap-8 ${
+            state.showScores ? "lg:grid-cols-[minmax(0,1fr)_22rem]" : ""
+          }`}
+        >
+          <div className="mx-auto flex w-full max-w-5xl flex-col items-center text-center">
+            {state.phase === "question" && (
+              <div className="mb-6 flex flex-col items-center gap-2">
+                <TimerRing
+                  timerEndsAt={state.timerEndsAt}
+                  paused={state.timerPaused}
+                  pausedRemainingMs={state.timerPausedRemainingMs}
+                  totalSec={state.timeLimitSec}
+                  large
+                />
+                {state.timerPaused && (
+                  <p className="font-display text-3xl uppercase tracking-[0.18em] text-[var(--muted)]">
+                    {t("display.clockPaused")}
+                  </p>
+                )}
+              </div>
+            )}
+            {state.phase === "locked" && (
+              <p className="mb-5 font-display text-3xl uppercase tracking-[0.12em] text-[var(--accent)] sm:text-4xl">
+                {t("display.answersLocked")}
               </p>
-              <p className="font-display mt-2 text-4xl leading-tight sm:text-5xl lg:text-6xl">
-                <span className="text-[var(--accent)]">{correctLetter}</span>
-                <span className="mx-3 text-[var(--muted)]">·</span>
-                {correctOpt}
+            )}
+            {state.phase === "reveal" && correctOpt && correctLetter && (
+              <div className="mb-7 w-full rounded-3xl bg-[var(--accent-soft)] px-7 py-5 ring-2 ring-[var(--accent)]">
+                <p className="text-sm uppercase tracking-[0.25em] text-[var(--accent)]">
+                  {t("display.correctAnswer")}
+                </p>
+                <p className="font-display mt-2 text-4xl leading-tight sm:text-5xl lg:text-6xl">
+                  <span className="text-[var(--accent)]">{correctLetter}</span>
+                  <span className="mx-3 text-[var(--muted)]">·</span>
+                  {correctOpt}
+                </p>
+              </div>
+            )}
+            <h1 className="font-display max-w-4xl text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl">
+              {q.text}
+            </h1>
+            {state.tiebreak && (
+              <p className="mt-4 text-2xl text-[var(--muted)]">
+                {t("display.tiedTeams")}:{" "}
+                {state.teams
+                  .filter((team) => state.tiebreakTeamIds.includes(team.id))
+                  .map((team) => team.name)
+                  .join(", ")}
               </p>
-            </div>
-          )}
-          <h1 className="font-display max-w-4xl text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl">
-            {q.text}
-          </h1>
-          <ul className="mt-9 grid w-full gap-4 sm:grid-cols-2">
-            {q.options.map((opt, i) => {
-              const showCorrect =
-                state.phase === "reveal" &&
-                state.reveal?.correctIndex === i;
-              const dimOthers = state.phase === "reveal" && !showCorrect;
-              return (
-                <li
-                  key={opt}
-                  className={`rounded-3xl px-6 py-5 text-left text-xl font-bold text-[var(--navy)] sm:text-2xl lg:text-3xl ${
-                    showCorrect
-                      ? "bg-[var(--cream)] ring-2 ring-[var(--accent)]"
-                      : dimOthers
-                        ? "bg-[var(--cream)] opacity-45"
-                        : "bg-[var(--cream)]"
-                  }`}
-                >
-                  <span className="mr-3 font-extrabold text-[var(--navy)]">
-                    {String.fromCharCode(65 + i)}
-                  </span>
-                  {opt}
-                </li>
-              );
-            })}
-          </ul>
-          {state.phase === "question" && (
-            <p className="mt-7 text-lg text-[var(--muted)] sm:text-xl">
-              {state.answeredTeamIds.length === 1
-                ? t("display.teamsAnswered", {
-                    count: state.answeredTeamIds.length,
-                  })
-                : t("display.teamsAnsweredPlural", {
-                    count: state.answeredTeamIds.length,
-                  })}
-            </p>
-          )}
-          {state.phase === "locked" && (
-            <p className="mt-7 text-xl text-[var(--muted)]">
-              {t("display.revealing")}
-            </p>
+            )}
+            <ul className="mt-9 grid w-full gap-4 sm:grid-cols-2">
+              {q.options.map((opt, i) => {
+                const showCorrect =
+                  state.phase === "reveal" &&
+                  state.reveal?.correctIndex === i;
+                const dimOthers = state.phase === "reveal" && !showCorrect;
+                return (
+                  <li
+                    key={opt}
+                    className={`rounded-3xl px-6 py-5 text-left text-xl font-bold text-[var(--navy)] sm:text-2xl lg:text-3xl ${
+                      showCorrect
+                        ? "bg-[var(--cream)] ring-2 ring-[var(--accent)]"
+                        : dimOthers
+                          ? "bg-[var(--cream)] opacity-45"
+                          : "bg-[var(--cream)]"
+                    }`}
+                  >
+                    <span className="mr-3 font-extrabold text-[var(--navy)]">
+                      {String.fromCharCode(65 + i)}
+                    </span>
+                    {opt}
+                  </li>
+                );
+              })}
+            </ul>
+            {state.phase === "question" && (
+              <p className="mt-7 text-lg text-[var(--muted)] sm:text-xl">
+                {state.answeredTeamIds.length === 1
+                  ? t("display.teamsAnswered", {
+                      count: state.answeredTeamIds.length,
+                    })
+                  : t("display.teamsAnsweredPlural", {
+                      count: state.answeredTeamIds.length,
+                    })}
+              </p>
+            )}
+            {state.phase === "locked" && (
+              <p className="mt-7 text-xl text-[var(--muted)]">
+                {t("display.revealing")}
+              </p>
+            )}
+          </div>
+          {state.showScores && (
+            <aside className="card-panel max-h-[70dvh] overflow-y-auto p-5">
+              <h2 className="font-display mb-4 text-3xl">{t("display.leaderboard")}</h2>
+              <Leaderboard teams={state.teams} />
+            </aside>
           )}
         </section>
       )}

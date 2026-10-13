@@ -99,7 +99,15 @@ type GameContextValue = {
   submitAnswer: (optionIndex: number) => Promise<unknown>;
   kickTeam: (teamId: string) => Promise<unknown>;
   adjustScore: (teamId: string, delta: number) => Promise<unknown>;
-  setQuestions: (questions: Question[], timeLimitSec?: number) => Promise<unknown>;
+  setQuestions: (
+    questions: Question[],
+    timeLimitSec?: number,
+    spareQuestion?: Question | null,
+  ) => Promise<unknown>;
+  setShowScores: (show: boolean) => Promise<unknown>;
+  returnToLobby: () => Promise<unknown>;
+  restartNight: () => Promise<unknown>;
+  startTiebreak: () => Promise<unknown>;
   endGame: () => Promise<unknown>;
 };
 
@@ -458,8 +466,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
       },
       kickTeam: (teamId) => hostAction("kickTeam", { teamId }),
       adjustScore: (teamId, delta) => hostAction("adjustScore", { teamId, delta }),
-      setQuestions: (questions, timeLimitSec) =>
-        hostAction("setQuestions", { questions, timeLimitSec }),
+      setQuestions: (questions, timeLimitSec, spareQuestion) =>
+        hostAction("setQuestions", { questions, timeLimitSec, spareQuestion }),
+      setShowScores: (show) => hostAction("setShowScores", { show }),
+      returnToLobby: () => hostAction("returnToLobby"),
+      restartNight: () => hostAction("restartNight"),
+      startTiebreak: () => hostAction("startTiebreak"),
       endGame: () => hostAction("endGame"),
     }),
     [

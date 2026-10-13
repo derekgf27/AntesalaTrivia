@@ -20,10 +20,17 @@ export function Leaderboard({
     );
   }
 
+  function place(index: number) {
+    let rank = index + 1;
+    while (rank > 1 && teams[rank - 2].score === teams[index].score) rank -= 1;
+    return rank;
+  }
+
   return (
     <ol className={`flex flex-col ${compact ? "gap-2" : "gap-3"}`}>
       {teams.map((team, index) => {
         const active = team.id === highlightTeamId;
+        const rank = place(index);
         return (
           <li
             key={team.id}
@@ -34,13 +41,13 @@ export function Leaderboard({
             }`}
           >
             <div className="flex min-w-0 items-center gap-3">
-              <span
-                className={`font-display tabular-nums tracking-normal ${
-                  compact ? "text-lg" : "text-2xl"
-                } ${index === 0 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-              >
-                {index + 1}
-              </span>
+            <span
+              className={`font-display tabular-nums tracking-normal ${
+                compact ? "text-lg" : "text-2xl"
+              } ${rank === 1 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+            >
+              {rank}
+            </span>
               <div className="min-w-0">
                 <p
                   className={`truncate font-semibold ${compact ? "text-base" : "text-lg"}`}

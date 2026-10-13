@@ -69,6 +69,9 @@ export default function PlayPage() {
     );
   }
 
+  const inTiebreak = Boolean(state.tiebreak);
+  const canAnswer =
+    !inTiebreak || Boolean(teamId && state.tiebreakTeamIds.includes(teamId));
   const q = state.question;
   const correctIndex = state.reveal?.correctIndex ?? null;
 
@@ -113,14 +116,17 @@ export default function PlayPage() {
         <section className="space-y-5">
           <div>
             <p className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-[var(--accent)]">
-              Q{state.questionIndex + 1}/{state.questionCount}
+              {inTiebreak
+                ? t("play.tiebreaker")
+                : `Q${state.questionIndex + 1}/${state.questionCount}`}
             </p>
             <h2 className="font-display text-2xl font-bold leading-tight sm:text-3xl">
               {q.text}
             </h2>
           </div>
           <div className="grid gap-3">
-            {q.options.map((opt, i) => {
+            {canAnswer ? (
+              q.options.map((opt, i) => {
               const isSelected = selected === i;
               return (
                 <button
@@ -150,8 +156,12 @@ export default function PlayPage() {
                   {opt}
                 </button>
               );
-            })}
+            })
+            ) : (
+              <p className="text-[var(--muted)]">{t("play.sittingOut")}</p>
+            )}
           </div>
+          {canAnswer && (
           <p className="text-sm text-[var(--muted)]">
             {!player
               ? t("play.reconnectSeat")
@@ -159,13 +169,14 @@ export default function PlayPage() {
                 ? t("play.answerLocked")
                 : t("play.pickAnswer")}
           </p>
+          )}
         </section>
       )}
 
       {state.phase === "locked" && q && (
         <section className="space-y-4">
           <p className="font-display text-xl font-bold uppercase tracking-[0.12em] text-[var(--accent)]">
-            {t("play.answersLocked")}
+            {inTiebreak ? t("play.tiebreaker") : t("play.answersLocked")}
           </p>
           <h2 className="font-display text-2xl font-bold leading-tight">{q.text}</h2>
           <ul className="grid gap-3">

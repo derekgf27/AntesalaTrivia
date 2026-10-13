@@ -250,6 +250,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(await afterMutate(code));
       }
 
+      case "setShowScores": {
+        const code = await adminCode(body);
+        await gameStore.mutate(code, (room) =>
+          gameStore.setShowScores(room, Boolean(body.show)),
+        );
+        return NextResponse.json(await afterMutate(code));
+      }
+
       case "setQuestions": {
         const code = await adminCode(body);
         await gameStore.mutate(code, (room) =>
@@ -259,6 +267,9 @@ export async function POST(req: NextRequest) {
             typeof body.timeLimitSec === "number"
               ? body.timeLimitSec
               : undefined,
+            body.spareQuestion === null
+              ? null
+              : (body.spareQuestion as Question | undefined),
           ),
         );
         return NextResponse.json(await afterMutate(code));
@@ -267,6 +278,24 @@ export async function POST(req: NextRequest) {
       case "endGame": {
         const code = await adminCode(body);
         await gameStore.mutate(code, (room) => gameStore.finishGame(room));
+        return NextResponse.json(await afterMutate(code));
+      }
+
+      case "returnToLobby": {
+        const code = await adminCode(body);
+        await gameStore.mutate(code, (room) => gameStore.returnToLobby(room));
+        return NextResponse.json(await afterMutate(code));
+      }
+
+      case "restartNight": {
+        const code = await adminCode(body);
+        await gameStore.mutate(code, (room) => gameStore.restartNight(room));
+        return NextResponse.json(await afterMutate(code));
+      }
+
+      case "startTiebreak": {
+        const code = await adminCode(body);
+        await gameStore.mutate(code, (room) => gameStore.startTiebreak(room));
         return NextResponse.json(await afterMutate(code));
       }
 

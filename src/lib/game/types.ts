@@ -45,11 +45,17 @@ export type PublicGameState = {
   timerEndsAt: number | null;
   timerPaused: boolean;
   timerPausedRemainingMs: number | null;
+  /** Host toggle for the score column on the TV during a question. */
+  showScores: boolean;
   /** Shared answer time for every question. */
   timeLimitSec: number;
   teams: Team[];
   reveal: RevealInfo | null;
   answeredTeamIds: string[];
+  /** True while the spare question is the live round. */
+  tiebreak: boolean;
+  /** Teams allowed to answer the spare question. */
+  tiebreakTeamIds: string[];
 };
 
 export type AdminGameState = PublicGameState & {
@@ -59,6 +65,7 @@ export type AdminGameState = PublicGameState & {
   createdAt: string;
   /** Team IDs with at least one connected player socket. */
   connectedTeamIds: string[];
+  spareQuestion: Question | null;
 };
 
 export type CreateNightInput = {
@@ -82,6 +89,7 @@ export type NightRecord = {
   questionIndex?: number;
   reveal?: RevealInfo | null;
   timeLimitSec?: number;
+  spareQuestion?: Question | null;
 };
 
 export type ClientRole = "admin" | "display" | "player";

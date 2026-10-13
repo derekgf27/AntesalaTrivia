@@ -17,6 +17,7 @@ import {
   withLock,
 } from "./persist";
 import { LOBBY_CODE_LENGTH } from "./code";
+import { tiedLeaders } from "./tiebreak";
 import type {
   AdminGameState,
   CreateNightInput,
@@ -54,11 +55,15 @@ export type GameRoom = {
   timerEndsAt: number | null;
   timerPausedRemainingMs: number | null;
   timeLimitSec: number;
+  showScores: boolean;
   teams: Team[];
   players: Record<string, Player>;
   currentAnswers: Record<string, number>;
   reveal: RevealInfo | null;
   lockedAt: number | null;
+  spareQuestion: Question | null;
+  tiebreak: boolean;
+  tiebreakTeamIds: string[];
 };
 
 function cloneQuestions(questions: Question[]): Question[] {
@@ -103,6 +108,7 @@ function toNightRecord(room: GameRoom): NightRecord {
     questionIndex: room.questionIndex,
     reveal: room.reveal,
     timeLimitSec: room.timeLimitSec,
+    spareQuestion: room.spareQuestion ?? null,
   };
 }
 
@@ -147,6 +153,7 @@ function restoreFromRecord(record: NightRecord): GameRoom {
     questionIndex,
     timerEndsAt: null,
     timerPausedRemainingMs: null,
+    showScores: true,
     timeLimitSec: Math.max(
       5,
       Math.min(
@@ -160,14 +167,20 @@ function restoreFromRecord(record: NightRecord): GameRoom {
     reveal:
       phase === "reveal" || phase === "finished" ? (record.reveal ?? null) : null,
     lockedAt: null,
+    spareQuestion: record.spareQuestion ?? null,
+    tiebreak: false,
+    tiebreakTeamIds: [],
   };
 }
 
+function activeQuestion(room: GameRoom): Question | undefined {
+  if (room.tiebreak) return room.spareQuestion ?? undefined;
+  if (room.phase === "lobby" || room.questionIndex < 0) return undefined;
+  return room.questions[room.questionIndex];
+}
+
 export function toPublic(room: GameRoom): PublicGameState {
-  const q =
-    room.phase === "lobby" || room.questionIndex < 0
-      ? null
-      : room.questions[room.questionIndex];
+  const q = activeQuestion(room);
 
   return {
     code: room.code,
@@ -188,6 +201,7 @@ export function toPublic(room: GameRoom): PublicGameState {
     timerEndsAt: room.timerEndsAt,
     timerPaused: room.timerPausedRemainingMs != null,
     timerPausedRemainingMs: room.timerPausedRemainingMs,
+    showScores: room.showScores !== false,
     timeLimitSec: room.timeLimitSec,
     teams: [...room.teams].sort(
       (a, b) => b.score - a.score || a.name.localeCompare(b.name),
@@ -195,6 +209,8 @@ export function toPublic(room: GameRoom): PublicGameState {
     reveal:
       room.phase === "reveal" || room.phase === "finished" ? room.reveal : null,
     answeredTeamIds: Object.keys(room.currentAnswers),
+    tiebreak: Boolean(room.tiebreak),
+    tiebreakTeamIds: room.tiebreakTeamIds ?? [],
   };
 }
 
@@ -215,6 +231,7 @@ export function toAdmin(room: GameRoom): AdminGameState {
     createdAt: room.createdAt,
     reveal: room.reveal,
     connectedTeamIds,
+    spareQuestion: room.spareQuestion ?? null,
   };
 }
 
@@ -229,7 +246,8 @@ function lockAnswers(room: GameRoom) {
 
 function revealAnswers(room: GameRoom) {
   if (room.phase !== "locked" && room.phase !== "question") return;
-  const q = room.questions[room.questionIndex];
+  const q = activeQuestion(room);
+  if (!q) return;
   const awarded: RevealInfo["awarded"] = [];
 
   for (const [teamId, answer] of Object.entries(room.currentAnswers)) {
@@ -362,11 +380,15 @@ class GameStore {
       timerEndsAt: null,
       timerPausedRemainingMs: null,
       timeLimitSec: 30,
+      showScores: true,
       teams: [],
       players: {},
       currentAnswers: {},
       reveal: null,
       lockedAt: null,
+      spareQuestion: null,
+      tiebreak: false,
+      tiebreakTeamIds: [],
     };
 
     await persistRoom(room);
@@ -496,7 +518,16 @@ class GameStore {
     team.score = Math.max(0, team.score + step);
   }
 
-  setQuestions(room: GameRoom, questions: Question[], timeLimitSec?: number) {
+  setShowScores(room: GameRoom, show: boolean) {
+    room.showScores = show;
+  }
+
+  setQuestions(
+    room: GameRoom,
+    questions: Question[],
+    timeLimitSec?: number,
+    spareQuestion?: Question | null,
+  ) {
     if (room.phase === "finished") {
       throw new Error("Can't edit questions after the night ends");
     }
@@ -513,6 +544,43 @@ class GameStore {
       ...q,
       timeLimitSec: room.timeLimitSec,
     }));
+
+    if (spareQuestion !== undefined) {
+      if (spareQuestion === null) {
+        room.spareQuestion = null;
+      } else {
+        const text = spareQuestion.text.trim();
+        const options = spareQuestion.options.map((option) => option.trim());
+        if (!text || options.some((option) => !option)) {
+          throw new Error("Finish the tiebreaker question or clear it");
+        }
+        room.spareQuestion = {
+          ...spareQuestion,
+          text,
+          options: options as Question["options"],
+          timeLimitSec: room.timeLimitSec,
+        };
+      }
+    }
+  }
+
+  startTiebreak(room: GameRoom) {
+    if (room.phase === "finished") throw new Error("This night is over");
+    if (room.phase === "question" || room.phase === "locked") {
+      throw new Error("Question already in progress");
+    }
+    if (!room.spareQuestion) throw new Error("Add a tiebreaker question first");
+    if (room.questionIndex + 1 < room.questions.length) {
+      throw new Error("Finish the regular questions first");
+    }
+    const leaders = tiedLeaders(room.teams);
+    if (leaders.length < 2) throw new Error("First place is not tied");
+    room.tiebreak = true;
+    room.tiebreakTeamIds = leaders.map((team) => team.id);
+    room.phase = "question";
+    room.currentAnswers = {};
+    room.reveal = null;
+    armQuestionTimer(room, Math.max(5, room.timeLimitSec) * 1000);
   }
 
   startQuestion(room: GameRoom) {
@@ -559,6 +627,45 @@ class GameStore {
     room.lockedAt = null;
   }
 
+  /** Put the same night back in the lobby. Teams stay. Scores and progress clear. */
+  restartNight(room: GameRoom) {
+    if (room.phase === "finished") throw new Error("This night is over");
+    room.phase = "lobby";
+    room.questionIndex = -1;
+    room.currentAnswers = {};
+    room.reveal = null;
+    room.timerEndsAt = null;
+    room.timerPausedRemainingMs = null;
+    room.lockedAt = null;
+    room.tiebreak = false;
+    room.tiebreakTeamIds = [];
+    for (const team of room.teams) team.score = 0;
+  }
+
+  /** Leave the live question and return to the lobby so the host can edit. */
+  returnToLobby(room: GameRoom) {
+    if (room.phase === "finished") throw new Error("This night is over");
+    if (room.phase === "lobby") return;
+
+    if (room.phase === "reveal" && room.reveal) {
+      for (const award of room.reveal.awarded) {
+        const team = room.teams.find((t) => t.id === award.teamId);
+        if (team) team.score = Math.max(0, team.score - award.points);
+      }
+    }
+
+    const wasTiebreak = Boolean(room.tiebreak);
+    if (!wasTiebreak && room.questionIndex >= 0) room.questionIndex -= 1;
+    room.tiebreak = false;
+    room.tiebreakTeamIds = [];
+    room.phase = "lobby";
+    room.currentAnswers = {};
+    room.reveal = null;
+    room.timerEndsAt = null;
+    room.timerPausedRemainingMs = null;
+    room.lockedAt = null;
+  }
+
   async deleteNight(id: string): Promise<{
     deleted: NightRecord;
     wasCurrent: boolean;
@@ -591,6 +698,9 @@ class GameStore {
       throw new Error("Time is up");
     }
     if (optionIndex < 0 || optionIndex > 3) throw new Error("Invalid answer");
+    if (room.tiebreak && !(room.tiebreakTeamIds ?? []).includes(teamId)) {
+      throw new Error("Only the tied teams answer this one");
+    }
     room.currentAnswers[teamId] = optionIndex;
   }
 }

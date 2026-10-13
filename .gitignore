@@ -38,3 +38,6 @@ yarn-error.log*
 
 # local night history
 /data/
+
+.vercel
+.env*

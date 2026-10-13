@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { Figtree, Outfit } from "next/font/google";
-import { BackButton } from "@/components/BackButton";
 import { Providers } from "@/components/Providers";
-import { HeaderActions } from "@/components/HeaderActions";
-import { HomeHeaderActions } from "@/components/HomeHeaderActions";
+import { SiteHeader } from "@/components/SiteHeader";
 import { themeInitScript } from "@/lib/theme";
 import { localeInitScript } from "@/lib/i18n/locale";
 import "./globals.css";
@@ -41,13 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full antialiased">
         <Providers>
           <div className="flex min-h-full flex-col">
-            <div className="sticky top-0 z-40 flex items-center gap-2 px-3 py-2">
-              <BackButton />
-              <div className="ml-auto flex items-center gap-2">
-                <HomeHeaderActions />
-                <HeaderActions />
-              </div>
-            </div>
+            <SiteHeader />
             <div className="flex-1">{children}</div>
           </div>
         </Providers>
