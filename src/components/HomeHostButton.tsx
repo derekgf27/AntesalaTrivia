@@ -1,24 +1,33 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { HostPinModal } from "@/components/HostPinModal";
 import { useLocale } from "@/components/LocaleProvider";
-import { unlockHostSession } from "@/lib/hostSession";
 
 export function HomeHostButton() {
   const router = useRouter();
   const { t } = useLocale();
+  const [open, setOpen] = useState(false);
 
   return (
-    <button
-      type="button"
-      onClick={() => {
-        unlockHostSession();
-        router.push("/admin");
-      }}
-      className="header-pill"
-      aria-label={t("common.host")}
-    >
-      {t("common.host")}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="header-pill"
+        aria-label={t("hostPin.aria")}
+      >
+        {t("common.host")}
+      </button>
+      <HostPinModal
+        open={open}
+        onClose={() => setOpen(false)}
+        onSuccess={() => {
+          setOpen(false);
+          router.push("/admin");
+        }}
+      />
+    </>
   );
 }

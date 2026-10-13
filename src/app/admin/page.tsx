@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HostBreadcrumbs } from "@/components/HostBreadcrumbs";
 import { HostNightModal } from "@/components/HostNightModal";
+import { HostPinModal } from "@/components/HostPinModal";
 import { useLocale } from "@/components/LocaleProvider";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
 import type { Question } from "@/lib/game/types";
-import { unlockHostSession } from "@/lib/hostSession";
+import { isHostUnlocked } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
 
 function blankQuestion(): Question {
@@ -61,6 +62,7 @@ export default function AdminPage() {
     endGame,
   } = useGameState();
 
+  const [hostReady, setHostReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [questionsOpen, setQuestionsOpen] = useState(true);
@@ -72,7 +74,7 @@ export default function AdminPage() {
   const [confirmEndNight, setConfirmEndNight] = useState(false);
 
   useEffect(() => {
-    unlockHostSession();
+    setHostReady(isHostUnlocked());
   }, []);
 
   useEffect(() => {
@@ -203,6 +205,14 @@ export default function AdminPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!hostReady) {
+    return (
+      <main className="grid min-h-dvh place-items-center">
+        <HostPinModal open onSuccess={() => setHostReady(true)} />
+      </main>
+    );
   }
 
   if (!adminState || modalOpen) {

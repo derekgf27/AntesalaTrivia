@@ -97,11 +97,11 @@ async function redisIsUp(): Promise<boolean> {
 
 async function redisOp<T>(
   fallback: () => Promise<T> | T,
-  op: (client: Redis) => Promise<T>,
+  op: (client: Redis) => Promise<unknown>,
 ): Promise<T> {
   if (!(await redisIsUp())) return await fallback();
   try {
-    return await op(redis());
+    return (await op(redis())) as T;
   } catch (error) {
     if (!isRedisNetworkError(error)) throw error;
     redisState = "down";
