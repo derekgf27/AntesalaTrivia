@@ -225,6 +225,7 @@ export function toAdmin(room: GameRoom): AdminGameState {
   ];
   return {
     ...toPublic(room),
+    questionIndex: room.questionIndex,
     id: room.id,
     questions: room.questions,
     currentAnswers: { ...room.currentAnswers },
@@ -607,7 +608,9 @@ class GameStore {
 
   restartTimer(room: GameRoom) {
     if (room.phase !== "question") throw new Error("No active question");
-    armQuestionTimer(room, Math.max(5, room.timeLimitSec) * 1000);
+    room.timerEndsAt = null;
+    room.lockedAt = null;
+    room.timerPausedRemainingMs = Math.max(5, room.timeLimitSec) * 1000;
   }
 
   forceLock(room: GameRoom) {

@@ -8,6 +8,7 @@ import { Leaderboard } from "@/components/Leaderboard";
 import { TimerRing } from "@/components/TimerRing";
 import { useLocale } from "@/components/LocaleProvider";
 import { LOBBY_CODE_LENGTH, clampLobbyCode } from "@/lib/game/code";
+import { firstPlace } from "@/lib/game/tiebreak";
 import { getRememberedDisplayCode } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
 
@@ -100,6 +101,8 @@ function DisplayInner() {
     state.teams.length === 1
       ? t("display.teamsReady", { count: state.teams.length })
       : t("display.teamsReadyPlural", { count: state.teams.length });
+  const winners = firstPlace(state.teams);
+  const winningScore = winners[0]?.score ?? 0;
 
   return (
     <main className="flex min-h-dvh flex-col px-8 py-8 lg:px-14 lg:py-10">
@@ -289,9 +292,36 @@ function DisplayInner() {
       )}
 
       {state.phase === "finished" && (
-        <div className="grid flex-1 items-start gap-8 lg:grid-cols-[1.2fr_0.9fr] lg:gap-12">
+        <div className="grid flex-1 items-center gap-8 lg:grid-cols-[1.3fr_0.8fr] lg:gap-12">
           <section className="flex flex-col justify-center">
-            <h1 className="font-display text-6xl sm:text-8xl">{t("display.finalBoard")}</h1>
+            {winners.length > 0 ? (
+              <div className="rounded-3xl bg-[var(--accent-soft)] px-7 py-8 ring-2 ring-[var(--accent)]">
+                <p className="text-sm uppercase tracking-[0.25em] text-[var(--accent)]">
+                  {winners.length > 1 ? t("display.tie") : t("display.winner")}
+                </p>
+                <div className="mt-3 space-y-2">
+                  {winners.map((team) => (
+                    <h1
+                      key={team.id}
+                      className={`font-display font-bold leading-tight break-words ${
+                        winners.length > 1
+                          ? "text-5xl sm:text-6xl lg:text-7xl"
+                          : "text-6xl sm:text-7xl lg:text-8xl"
+                      }`}
+                    >
+                      {team.name}
+                    </h1>
+                  ))}
+                </div>
+                <p className="font-display mt-4 text-4xl tabular-nums sm:text-5xl">
+                  {winningScore === 1
+                    ? t("display.winnerPoints", { count: winningScore })
+                    : t("display.winnerPointsPlural", { count: winningScore })}
+                </p>
+              </div>
+            ) : (
+              <h1 className="font-display text-6xl sm:text-8xl">{t("display.finalBoard")}</h1>
+            )}
             <p className="mt-4 text-2xl text-[var(--muted)]">{t("display.thanks")}</p>
           </section>
           <aside className="card-panel p-6">

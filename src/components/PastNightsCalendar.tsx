@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "@/components/LocaleProvider";
+import { parseDateInput } from "@/lib/game/dateUtils";
+import { firstPlace } from "@/lib/game/tiebreak";
 import { localeTag } from "@/lib/i18n/locale";
-import type { NightRecord } from "@/lib/game/types";
+import type { NightRecord, Team } from "@/lib/game/types";
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -21,6 +23,14 @@ function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function nightKey(night: NightRecord) {
+  return night.scheduledDate || night.createdAt.slice(0, 10);
+}
+
+function isOpenNight(night: NightRecord) {
+  return !night.finishedAt && night.phase !== "finished";
+}
+
 export function PastNightsCalendar({
   nights,
   busy,
@@ -34,15 +44,26 @@ export function PastNightsCalendar({
 }) {
   const { locale, t } = useLocale();
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
-  const [selected, setSelected] = useState<Date | null>(new Date());
+  const [selected, setSelected] = useState<Date | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const jumped = useRef(false);
   const weekdays = t("pastNights.weekdays").split(",");
   const dateLocale = localeTag(locale);
+
+  useEffect(() => {
+    if (jumped.current || nights.length === 0) return;
+    jumped.current = true;
+    const newest = nights[0];
+    const raw = nightKey(newest);
+    const parsed = parseDateInput(raw);
+    setCursor(startOfMonth(parsed));
+    setSelected(parsed);
+  }, [nights]);
 
   const nightsByDay = useMemo(() => {
     const map = new Map<string, NightRecord[]>();
     for (const night of nights) {
-      const key = night.scheduledDate || night.createdAt.slice(0, 10);
+      const key = nightKey(night);
       const list = map.get(key) ?? [];
       list.push(night);
       map.set(key, list);
@@ -67,9 +88,14 @@ export function PastNightsCalendar({
     return out;
   }, [cursor]);
 
-  const selectedNights = selected
-    ? nightsByDay.get(dateKey(selected)) ?? []
-    : [];
+  const monthPrefix = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
+  const monthNights = nights
+    .filter((night) => nightKey(night).startsWith(monthPrefix))
+    .sort(
+      (a, b) =>
+        nightKey(b).localeCompare(nightKey(a)) ||
+        b.createdAt.localeCompare(a.createdAt),
+    );
 
   const monthLabel = cursor.toLocaleDateString(dateLocale, {
     month: "long",
@@ -78,16 +104,32 @@ export function PastNightsCalendar({
 
   const today = new Date();
 
+  function shiftMonth(delta: number) {
+    jumped.current = true;
+    setConfirmId(null);
+    setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
+  }
+
+  function pickDay(date: Date) {
+    jumped.current = true;
+    setSelected(date);
+    setConfirmId(null);
+    const first = monthNights.find((night) => nightKey(night) === dateKey(date));
+    if (!first) return;
+    document.getElementById(`night-${first.id}`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+  }
+
   return (
-    <div className="grid h-full min-h-0 gap-5 lg:grid-cols-[1.15fr_0.85fr]">
-      <div className="flex min-h-0 flex-col gap-3">
-        <div className="flex shrink-0 items-center justify-between gap-2">
+    <div className="grid items-start gap-8 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
           <button
             type="button"
             className="btn btn-ghost px-3 py-2"
-            onClick={() =>
-              setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))
-            }
+            onClick={() => shiftMonth(-1)}
             aria-label={t("pastNights.prevMonth")}
           >
             ←
@@ -96,9 +138,7 @@ export function PastNightsCalendar({
           <button
             type="button"
             className="btn btn-ghost px-3 py-2"
-            onClick={() =>
-              setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))
-            }
+            onClick={() => shiftMonth(1)}
             aria-label={t("pastNights.nextMonth")}
           >
             →
@@ -123,10 +163,7 @@ export function PastNightsCalendar({
                 key={key + String(inMonth)}
                 type="button"
                 disabled={!inMonth}
-                onClick={() => {
-                  setSelected(date);
-                  setConfirmId(null);
-                }}
+                onClick={() => pickDay(date)}
                 className={`relative flex h-10 flex-col items-center justify-center rounded-lg text-sm transition sm:h-11 ${
                   !inMonth
                     ? "opacity-20"
@@ -151,106 +188,147 @@ export function PastNightsCalendar({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-col rounded-xl bg-[var(--surface-2)] p-4">
-        <p className="mb-3 shrink-0 text-xs uppercase tracking-[0.15em] text-[var(--muted)]">
-          {selected
-            ? selected.toLocaleDateString(dateLocale, {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })
-            : t("pastNights.selectDay")}
-        </p>
-        {selectedNights.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">{t("pastNights.noNights")}</p>
-        ) : (
-          <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-            {selectedNights.map((night) => {
-              const unfinished =
-                !night.finishedAt && night.phase !== "finished";
-              const confirming = confirmId === night.id;
-              return (
-                <li key={night.id} className="rounded-lg bg-[var(--surface)] px-3 py-2">
-                  <p className="font-semibold">{night.title}</p>
-                  <p className="text-xs text-[var(--muted)]">
-                    {new Date(night.createdAt).toLocaleTimeString(dateLocale, {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}{" "}
-                    {t("pastNights.codeTeams", {
-                      code: night.code,
-                      count: night.teams.length,
-                    })}
-                    {unfinished ? t("pastNights.inProgress") : night.phase}
-                  </p>
-                  {night.teams[0] && (
-                    <p className="mt-1 text-sm text-[var(--accent)]">
-                      {t("pastNights.top", {
-                        name: night.teams[0].name,
-                        score: night.teams[0].score,
-                      })}
-                    </p>
-                  )}
-                  <div className="mt-3 flex flex-col gap-2">
-                    {unfinished && onResumeNight && (
-                      <button
-                        type="button"
-                        className="btn btn-primary w-full py-2 text-sm"
-                        disabled={busy}
-                        onClick={() => onResumeNight(night.code)}
-                      >
-                        {t("pastNights.resume")}
-                      </button>
-                    )}
-                    {onDeleteNight &&
-                      (confirming ? (
-                        <div className="danger-soft-panel space-y-2 rounded-lg p-2">
-                          <p className="text-xs text-[var(--danger)]">
-                            {t("pastNights.deleteConfirm", {
-                              live: unfinished ? t("pastNights.deleteLive") : "",
-                            })}
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="btn btn-danger py-2 text-sm"
-                              disabled={busy}
-                              onClick={() => {
-                                void Promise.resolve(onDeleteNight(night.id)).finally(
-                                  () => setConfirmId(null),
-                                );
-                              }}
-                            >
-                              {t("pastNights.yesDelete")}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost py-2 text-sm"
-                              disabled={busy}
-                              onClick={() => setConfirmId(null)}
-                            >
-                              {t("common.cancel")}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-ghost w-full py-2 text-sm text-[var(--danger)]"
-                          disabled={busy}
-                          onClick={() => setConfirmId(night.id)}
-                        >
-                          {t("pastNights.deleteNight")}
-                        </button>
-                      ))}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+      {monthNights.length === 0 ? (
+        <p className="text-sm text-[var(--muted)]">{t("pastNights.noMonth")}</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {monthNights.map((night) => (
+            <NightRow
+              key={night.id}
+              night={night}
+              selected={selected ? nightKey(night) === dateKey(selected) : false}
+              confirming={confirmId === night.id}
+              busy={busy}
+              dateLocale={dateLocale}
+              onOpen={onResumeNight}
+              onAskDelete={() => setConfirmId(night.id)}
+              onCancelDelete={() => setConfirmId(null)}
+              onDelete={onDeleteNight}
+            />
+          ))}
+        </ul>
+      )}
     </div>
+  );
+}
+
+function winnerText(
+  teams: Team[],
+  t: (key: string, vars?: Record<string, string | number>) => string,
+) {
+  const winners = firstPlace(teams);
+  if (winners.length === 0) return null;
+  if (winners.length === 1) {
+    return t("admin.winnerLine", {
+      name: winners[0].name,
+      score: winners[0].score,
+    });
+  }
+  return t("admin.tieLine", {
+    names: winners.map((team) => team.name).join(", "),
+    score: winners[0].score,
+  });
+}
+
+function NightRow({
+  night,
+  selected,
+  confirming,
+  busy,
+  dateLocale,
+  onOpen,
+  onAskDelete,
+  onCancelDelete,
+  onDelete,
+}: {
+  night: NightRecord;
+  selected: boolean;
+  confirming: boolean;
+  busy?: boolean;
+  dateLocale: string;
+  onOpen?: (code: string) => void;
+  onAskDelete: () => void;
+  onCancelDelete: () => void;
+  onDelete?: (nightId: string) => Promise<void> | void;
+}) {
+  const { t } = useLocale();
+  const open = isOpenNight(night);
+  const when = parseDateInput(nightKey(night)).toLocaleDateString(dateLocale, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const place = open ? null : winnerText(night.teams, t);
+
+  return (
+    <li
+      id={`night-${night.id}`}
+      className={`rounded-xl bg-[var(--surface-2)] px-4 py-3 ${
+        selected ? "ring-1 ring-[var(--accent)]" : ""
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-semibold">{when}</p>
+          <p className="font-code text-2xl text-[var(--accent)]">{night.code}</p>
+          {open ? (
+            <p className="text-sm text-[var(--muted)]">{t("pastNights.inProgress")}</p>
+          ) : (
+            place && <p className="text-sm text-[var(--accent)]">{place}</p>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {open && onOpen && (
+            <button
+              type="button"
+              className="btn btn-primary py-2 text-sm"
+              disabled={busy}
+              onClick={() => onOpen(night.code)}
+            >
+              {t("pastNights.open")}
+            </button>
+          )}
+          {onDelete && !confirming && (
+            <button
+              type="button"
+              className="btn btn-ghost py-2 text-sm text-[var(--danger)]"
+              disabled={busy}
+              onClick={onAskDelete}
+            >
+              {t("pastNights.deleteNight")}
+            </button>
+          )}
+        </div>
+      </div>
+      {confirming && onDelete && (
+        <div className="danger-soft-panel mt-3 space-y-2 rounded-lg p-3">
+          <p className="text-xs text-[var(--danger)]">
+            {t("pastNights.deleteConfirm", {
+              live: open ? t("pastNights.deleteLive") : "",
+            })}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn btn-danger py-2 text-sm"
+              disabled={busy}
+              onClick={() => {
+                void Promise.resolve(onDelete(night.id)).finally(onCancelDelete);
+              }}
+            >
+              {t("pastNights.yesDelete")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost py-2 text-sm"
+              disabled={busy}
+              onClick={onCancelDelete}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }

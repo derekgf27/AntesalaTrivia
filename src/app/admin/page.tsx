@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HostBreadcrumbs } from "@/components/HostBreadcrumbs";
-import { HostNightModal } from "@/components/HostNightModal";
+import { HostHome } from "@/components/HostHome";
 import { HostPinModal } from "@/components/HostPinModal";
 import { QuestionEditor } from "@/components/QuestionEditor";
 import { useLocale } from "@/components/LocaleProvider";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
-import { tiedLeaders } from "@/lib/game/tiebreak";
+import { firstPlace } from "@/lib/game/tiebreak";
 import type { Question } from "@/lib/game/types";
 import { isHostUnlocked } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
@@ -114,6 +114,7 @@ export default function AdminPage() {
   );
 
   function goToHostHome() {
+    setError(null);
     setAtHostHome(true);
     setModalOpen(true);
   }
@@ -133,32 +134,23 @@ export default function AdminPage() {
     />
   );
 
-  async function handleCreate(input: { scheduledDate: string }) {
+  async function handleCreate(input: {
+    scheduledDate: string;
+    useSample: boolean;
+  }) {
     setBusy(true);
     setError(null);
     try {
       await createGame({
         scheduledDate: input.scheduledDate,
         expectedTeams: 64,
-        questions: SAMPLE_QUESTIONS.map((q) => ({
-          ...q,
-          id: crypto.randomUUID(),
-        })),
+        questions: input.useSample
+          ? SAMPLE_QUESTIONS.map((q) => ({
+              ...q,
+              id: crypto.randomUUID(),
+            }))
+          : [blankQuestion()],
       });
-      setAtHostHome(false);
-      setModalOpen(false);
-    } catch {
-      /* surfaced */
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleResume() {
-    setBusy(true);
-    setError(null);
-    try {
-      await adminJoin();
       setAtHostHome(false);
       setModalOpen(false);
     } catch {
@@ -283,6 +275,24 @@ export default function AdminPage() {
         setConfirmDiscard(false);
         setEditing(false);
       }
+      const ready = editing ? draftQuestions : (adminState?.questions ?? []);
+      const complete =
+        ready.length > 0 &&
+        ready.every(
+          (question) =>
+            question.text.trim() &&
+            question.options.every((option) => option.trim()),
+        );
+      if (!complete) {
+        setDraftQuestions(ready.length ? ready : [blankQuestion()]);
+        setDraftSpare(adminState?.spareQuestion ?? blankQuestion());
+        setDraftTimeLimit(adminState?.timeLimitSec || 30);
+        setQuestionsOpen(true);
+        setConfirmDiscard(false);
+        setEditing(true);
+        setError(t("admin.finishQuestions"));
+        return;
+      }
       await startQuestion();
     } catch (e) {
       setError(e instanceof Error ? e.message : t("common.couldNotSave"));
@@ -310,30 +320,17 @@ export default function AdminPage() {
 
   if (!adminState || modalOpen) {
     return (
-      <main className="relative min-h-dvh">
-        <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-4 px-6 py-12">
-          {hostCrumbs}
-          <h1 className="font-display text-4xl">{t("admin.title")}</h1>
-          <p className="text-[var(--muted)]">{t("admin.subtitle")}</p>
-          {connected && !adminState && (
-            <p className="text-sm text-[var(--muted)]">
-              {t("admin.reconnecting")}
-            </p>
-          )}
-        </div>
-        <HostNightModal
-          open
+        <HostHome
           connected={connected}
           busy={busy}
           error={error}
           breadcrumbs={hostCrumbs}
+          adminState={adminState}
           onCreate={handleCreate}
-          onResume={handleResume}
           onResumeNight={handleResumeNight}
           onDeleteNight={handleDeleteNight}
           onLoadHistory={handleLoadHistory}
         />
-      </main>
     );
   }
 
@@ -351,7 +348,8 @@ export default function AdminPage() {
   const regularDone =
     adminState.questionIndex >= 0 &&
     adminState.questionIndex + 1 >= adminState.questionCount;
-  const firstPlaceTied = tiedLeaders(adminState.teams).length >= 2;
+  const winners = firstPlace(adminState.teams);
+  const firstPlaceTied = winners.length >= 2;
   const offerTiebreak =
     !adminState.tiebreak &&
     regularDone &&
@@ -366,80 +364,27 @@ export default function AdminPage() {
     : adminState.questionCount;
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          {hostCrumbs}
-          <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <h1 className="font-display text-3xl">{adminState.title}</h1>
-            <p className="font-code text-4xl text-[var(--accent)]">{adminState.code}</p>
-            <p className="text-sm uppercase tracking-[0.16em] text-[var(--accent)]">
-              {phaseLabel(phase, t)}
-            </p>
-          </div>
-          <p className="text-sm text-[var(--muted)]">
-            {teamCount === 1
-              ? t("admin.teamOne", { count: teamCount })
-              : t("admin.teamMany", { count: teamCount })}
-            {teamCount > 0
-              ? t("admin.connected", { count: connectedCount })
-              : ""}
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8 lg:px-10">
+      <header>
+        {hostCrumbs}
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <h1 className="font-display text-3xl">{adminState.title}</h1>
+          <p className="font-code text-4xl text-[var(--accent)]">{adminState.code}</p>
+          <p className="text-sm uppercase tracking-[0.16em] text-[var(--accent)]">
+            {phaseLabel(phase, t)}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {displayUrl && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() =>
-                window.open(displayUrl, "antesala-tv", "noopener,noreferrer")
-              }
-            >
-              {t("admin.openTv")}
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={busy}
-            onClick={() =>
-              setShowScores(!adminState.showScores).catch(() => undefined)
-            }
-          >
-            {adminState.showScores
-              ? t("admin.hideScoresOnTv")
-              : t("admin.showScoresOnTv")}
-          </button>
-          {phase !== "finished" && !editing && !confirmEndNight && !confirmRestart && (
-            <>
-              <button
-                type="button"
-                className="btn btn-warning"
-                disabled={busy}
-                onClick={() => {
-                  setConfirmEndNight(false);
-                  setConfirmRestart(true);
-                }}
-              >
-                {t("admin.restartNight")}
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={busy}
-                onClick={() => {
-                  setConfirmRestart(false);
-                  setConfirmEndNight(true);
-                }}
-              >
-                {t("admin.endNight")}
-              </button>
-            </>
-          )}
-        </div>
+        <p className="text-sm text-[var(--muted)]">
+          {teamCount === 1
+            ? t("admin.teamOne", { count: teamCount })
+            : t("admin.teamMany", { count: teamCount })}
+          {teamCount > 0 ? t("admin.connected", { count: connectedCount }) : ""}
+        </p>
       </header>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(18rem,22rem)]">
+        <div className="flex min-w-0 flex-col gap-6">
       {confirmEndNight && phase !== "finished" && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] px-4 py-3">
+        <div className="card-panel flex flex-wrap items-center gap-3 p-4 lg:hidden">
           <p className="min-w-0 flex-1 text-sm text-[var(--muted)]">
             {t("admin.endConfirm")}
           </p>
@@ -466,7 +411,7 @@ export default function AdminPage() {
         </div>
       )}
       {confirmRestart && phase !== "finished" && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--line)] px-4 py-3">
+        <div className="card-panel flex flex-wrap items-center gap-3 p-4 lg:hidden">
           <p className="min-w-0 flex-1 text-sm text-[var(--muted)]">
             {t("admin.restartConfirm")}
           </p>
@@ -515,9 +460,9 @@ export default function AdminPage() {
         )}
 
         {phase === "lobby" && !editing && (
-          <div className="card-panel flex w-fit max-w-full flex-wrap items-center gap-4 p-3">
+          <div className="card-panel flex flex-col gap-4 p-5">
             <div className="min-w-0">
-              <h2 className="font-display text-xl">{t("admin.teamsJoined")}</h2>
+              <h2 className="font-display text-2xl">{t("admin.teamsJoined")}</h2>
               {adminState.teams.length === 0 ? (
                 <p className="mt-1 text-sm text-[var(--muted)]">{t("admin.noTeams")}</p>
               ) : (
@@ -763,7 +708,7 @@ export default function AdminPage() {
                       : ""}
                 </p>
                 <h2 className="font-display text-2xl leading-tight">{q.text}</h2>
-                <ul className="mt-4 grid gap-2">
+                <ul className="mt-4 grid gap-2 sm:grid-cols-2">
                   {q.options.map((opt, i) => {
                     const isCorrect =
                       phase === "reveal" &&
@@ -799,6 +744,19 @@ export default function AdminPage() {
         {phase === "finished" && (
           <div className="card-panel space-y-4 p-5">
             <h2 className="font-display text-3xl">{t("admin.nightComplete")}</h2>
+            {winners.length > 0 && (
+              <p className="font-display text-2xl">
+                {winners.length === 1
+                  ? t("admin.winnerLine", {
+                      name: winners[0].name,
+                      score: winners[0].score,
+                    })
+                  : t("admin.tieLine", {
+                      names: winners.map((team) => team.name).join(", "),
+                      score: winners[0].score,
+                    })}
+              </p>
+            )}
             <p className="text-[var(--muted)]">{t("admin.nightCompleteHint")}</p>
             <button
               type="button"
@@ -810,7 +768,217 @@ export default function AdminPage() {
           </div>
         )}
 
-        <div className="card-panel p-4">
+        </div>
+        <aside className="flex flex-col gap-6">
+          <section className="card-panel flex flex-col gap-3 p-5">
+            {displayUrl && (
+              <button
+                type="button"
+                className="btn btn-primary w-full"
+                onClick={() =>
+                  window.open(displayUrl, "antesala-tv", "noopener,noreferrer")
+                }
+              >
+                {t("admin.openTv")}
+              </button>
+            )}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={adminState.showScores}
+              className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3 text-left font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={busy}
+              onClick={() =>
+                setShowScores(!adminState.showScores).catch(() => undefined)
+              }
+            >
+              <span>{t("admin.scoresOnTv")}</span>
+              <span
+                aria-hidden
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                  adminState.showScores
+                    ? "bg-[var(--accent)]"
+                    : "bg-[var(--bg)]"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full transition-transform ${
+                    adminState.showScores
+                      ? "translate-x-5 bg-[var(--navy)]"
+                      : "bg-[var(--muted)]"
+                  }`}
+                />
+              </span>
+            </button>
+            {phase !== "finished" && !editing && !confirmEndNight && !confirmRestart && (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  className="btn btn-warning"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmEndNight(false);
+                    setConfirmRestart(true);
+                  }}
+                >
+                  {t("admin.restartNight")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmRestart(false);
+                    setConfirmEndNight(true);
+                  }}
+                >
+                  {t("admin.endNight")}
+                </button>
+              </div>
+            )}
+            {confirmEndNight && phase !== "finished" && (
+              <div className="hidden flex-col gap-3 lg:flex">
+                <p className="text-sm text-[var(--muted)]">{t("admin.endConfirm")}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={busy}
+                    onClick={() => {
+                      endGame()
+                        .then(() => setConfirmEndNight(false))
+                        .catch(() => undefined);
+                    }}
+                  >
+                    {t("admin.yesEnd")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={busy}
+                    onClick={() => setConfirmEndNight(false)}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </div>
+            )}
+            {confirmRestart && phase !== "finished" && (
+              <div className="hidden flex-col gap-3 lg:flex">
+                <p className="text-sm text-[var(--muted)]">{t("admin.restartConfirm")}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-warning"
+                    disabled={busy}
+                    onClick={() => {
+                      setBusy(true);
+                      restartNight()
+                        .then(() => {
+                          setConfirmRestart(false);
+                          setEditing(false);
+                          setConfirmDiscard(false);
+                        })
+                        .catch((e) =>
+                          setError(
+                            e instanceof Error ? e.message : t("admin.couldNotRestart"),
+                          ),
+                        )
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    {t("admin.yesRestart")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={busy}
+                    onClick={() => setConfirmRestart(false)}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+          {adminState.teams.length > 0 && (
+          <section className="card-panel p-5">
+            <h2 className="font-display mb-3 text-2xl">{t("admin.lobbyScores")}</h2>
+              <ul className="space-y-3">
+                {adminState.teams.map((team, index) => {
+                  const isConnected = adminState.connectedTeamIds?.includes(team.id);
+                  return (
+                    <li
+                      key={team.id}
+                      className="rounded-xl bg-[var(--surface-2)] px-3 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold">
+                            <span className="mr-2 text-[var(--muted)]">{index + 1}.</span>
+                            {team.name}
+                          </p>
+                          <p
+                            className={`mt-1 text-xs ${
+                              isConnected ? "text-[var(--accent)]" : "text-[var(--muted)]"
+                            }`}
+                          >
+                            {isConnected
+                              ? t("admin.connectedStatus")
+                              : t("admin.disconnected")}
+                            {team.isSolo
+                              ? ` · ${t("common.solo")}`
+                              : ` · ${t("common.team")}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-ghost px-3 py-1.5 text-sm"
+                            disabled={busy || team.score <= 0}
+                            onClick={() =>
+                              adjustScore(team.id, -1).catch(() => undefined)
+                            }
+                            aria-label={t("admin.subtractPoint", { name: team.name })}
+                          >
+                            −
+                          </button>
+                          <span className="font-display min-w-8 text-center text-2xl tabular-nums">
+                            {team.score}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-ghost px-3 py-1.5 text-sm"
+                            disabled={busy}
+                            onClick={() =>
+                              adjustScore(team.id, 1).catch(() => undefined)
+                            }
+                            aria-label={t("admin.addPoint", { name: team.name })}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          className="text-sm text-[var(--danger)]"
+                          disabled={busy}
+                          onClick={() => kickTeam(team.id).catch(() => undefined)}
+                        >
+                          {t("admin.kick")}
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+          </section>
+          )}
+        </aside>
+      </div>
+
+        <div className="card-panel p-5">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
@@ -936,95 +1104,6 @@ export default function AdminPage() {
             </button>
           )}
         </div>
-
-      {teamCount > 0 && (
-      <aside className="card-panel p-4">
-          <h3 className="font-display mb-3 text-xl">{t("admin.lobbyScores")}</h3>
-          <ul className="space-y-3">
-              {adminState.teams.length === 0 ? (
-                <li className="text-sm text-[var(--muted)]">
-                  {t("admin.noTeams")}
-                </li>
-              ) : (
-                adminState.teams.map((team, index) => {
-                  const isConnected = adminState.connectedTeamIds?.includes(
-                    team.id,
-                  );
-                  return (
-                    <li
-                      key={team.id}
-                      className="rounded-xl bg-[var(--surface-2)] px-3 py-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold truncate">
-                            <span className="text-[var(--muted)] mr-2">
-                              {index + 1}.
-                            </span>
-                            {team.name}
-                          </p>
-                          <p
-                            className={`mt-1 text-xs ${
-                              isConnected
-                                ? "text-[var(--accent)]"
-                                : "text-[var(--muted)]"
-                            }`}
-                          >
-                            {isConnected
-                              ? t("admin.connectedStatus")
-                              : t("admin.disconnected")}
-                            {team.isSolo
-                              ? ` · ${t("common.solo")}`
-                              : ` · ${t("common.team")}`}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-ghost px-3 py-1.5 text-sm"
-                            disabled={busy || team.score <= 0}
-                            onClick={() =>
-                              adjustScore(team.id, -1).catch(() => undefined)
-                            }
-                            aria-label={t("admin.subtractPoint", { name: team.name })}
-                          >
-                            −
-                          </button>
-                          <span className="font-display min-w-8 text-center text-2xl tabular-nums">
-                            {team.score}
-                          </span>
-                          <button
-                            type="button"
-                            className="btn btn-ghost px-3 py-1.5 text-sm"
-                            disabled={busy}
-                            onClick={() =>
-                              adjustScore(team.id, 1).catch(() => undefined)
-                            }
-                            aria-label={t("admin.addPoint", { name: team.name })}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          type="button"
-                          className="text-sm text-[var(--danger)]"
-                          disabled={busy}
-                          onClick={() =>
-                            kickTeam(team.id).catch(() => undefined)
-                          }
-                        >
-                          {t("admin.kick")}
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })
-              )}
-            </ul>
-      </aside>
-      )}
     </main>
   );
 }

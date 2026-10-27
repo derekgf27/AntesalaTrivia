@@ -139,12 +139,17 @@ function JoinForm() {
           />
         </label>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           {modeOptions.map(([value, label]) => (
             <button
               key={value}
               type="button"
-              className={`btn ${mode === value ? "btn-primary" : "btn-ghost"}`}
+              aria-pressed={mode === value}
+              className={`rounded-2xl px-3 py-3 text-sm font-semibold ${
+                mode === value
+                  ? "bg-[var(--accent)] text-[var(--navy)]"
+                  : "border border-[var(--line)] bg-transparent text-[var(--text)]"
+              }`}
               onClick={() => setMode(value)}
             >
               {label}
