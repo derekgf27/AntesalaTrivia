@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useLocale } from "@/components/LocaleProvider";
+import { topicBlocks, type TopicBlock } from "@/lib/game/topics";
 import type { Question } from "@/lib/game/types";
 
 function isComplete(question: Question) {
@@ -75,7 +76,12 @@ export function QuestionEditor({
     if (from === to || from < 0 || to < 0 || to >= questions.length) return;
     const next = [...questions];
     const [item] = next.splice(from, 1);
-    next.splice(to, 0, item);
+    const neighbor = next[Math.min(to, next.length - 1)];
+    const moved: Question = {
+      ...item,
+      topic: neighbor?.topic ?? item.topic ?? "",
+    };
+    next.splice(Math.min(to, next.length), 0, moved);
     onChange(next);
     setIndex((current) => {
       if (current === from) return to;
@@ -85,13 +91,69 @@ export function QuestionEditor({
     });
   }
 
+  function renameBlock(block: TopicBlock, name: string) {
+    onChange(
+      questions.map((item, i) =>
+        i >= block.start && i < block.end ? { ...item, topic: name } : item,
+      ),
+    );
+  }
+
+  function addInBlock(block: TopicBlock) {
+    const added: Question = {
+      id: crypto.randomUUID(),
+      text: "",
+      options: ["", "", "", ""],
+      correctIndex: 0,
+      timeLimitSec,
+      topic: block.name,
+    };
+    const next = [...questions];
+    next.splice(block.end, 0, added);
+    onChange(next);
+    setIndex(block.end);
+  }
+
+  function addTopic() {
+    const base = t("admin.newTopic");
+    const taken = new Set(questions.map((item) => (item.topic ?? "").trim()));
+    let name = base;
+    let n = 2;
+    while (taken.has(name)) {
+      name = `${base} ${n}`;
+      n += 1;
+    }
+    const added: Question = {
+      id: crypto.randomUUID(),
+      text: "",
+      options: ["", "", "", ""],
+      correctIndex: 0,
+      timeLimitSec,
+      topic: name,
+    };
+    onChange([...questions, added]);
+    setIndex(questions.length);
+  }
+
+  const blocks = topicBlocks(questions);
+
   return (
     <div className="grid gap-4 lg:grid-cols-[15rem_1fr]">
       <div className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
         <p className="hidden text-xs text-[var(--muted)] lg:block">
           {t("admin.dragToReorder")}
         </p>
-        {questions.map((item, i) => {
+        {blocks.map((block) => (
+          <div key={block.start} className="flex min-w-52 flex-col gap-2 lg:min-w-0">
+            <input
+              className="input py-2 text-sm font-semibold"
+              value={block.name}
+              placeholder={t("admin.topicName")}
+              aria-label={t("admin.topicName")}
+              onChange={(event) => renameBlock(block, event.target.value)}
+            />
+            {questions.slice(block.start, block.end).map((item, offset) => {
+          const i = block.start + offset;
           const selected = i === index;
           const label = item.text.trim() || t("admin.emptyQuestion");
           const canRemove = questions.length > 1 && i > lockedThrough;
@@ -187,23 +249,18 @@ export function QuestionEditor({
               )}
             </div>
           );
-        })}
-        <button
-          type="button"
-          className="btn btn-ghost shrink-0"
-          onClick={() => {
-            const added: Question = {
-              id: crypto.randomUUID(),
-              text: "",
-              options: ["", "", "", ""],
-              correctIndex: 0,
-              timeLimitSec,
-            };
-            onChange([...questions, added]);
-            setIndex(questions.length);
-          }}
-        >
-          {t("admin.addQuestion")}
+            })}
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => addInBlock(block)}
+            >
+              {t("admin.addQuestion")}
+            </button>
+          </div>
+        ))}
+        <button type="button" className="btn btn-ghost shrink-0" onClick={addTopic}>
+          {t("admin.addTopic")}
         </button>
       </div>
 

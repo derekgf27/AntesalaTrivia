@@ -128,13 +128,31 @@ export default function PlayPage() {
         </section>
       )}
 
+      {state.phase === "topic" && (
+        <section className="flex flex-1 flex-col justify-center">
+          <p className="text-sm font-semibold uppercase tracking-[0.25em] text-[var(--accent)]">
+            {t("play.upNext")}
+          </p>
+          <h2 className="font-display mt-3 text-5xl font-bold leading-none break-words sm:text-6xl">
+            {state.topic?.name.trim() || t("play.topicFallback")}
+          </h2>
+          <p className="mt-4 max-w-sm text-lg text-[var(--muted)]">{t("play.topicWait")}</p>
+        </section>
+      )}
+
       {state.phase === "question" && q && (
         <section className="space-y-5">
           <div>
             <p className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-[var(--accent)]">
               {inTiebreak
                 ? t("play.tiebreaker")
-                : `Q${state.questionIndex + 1}/${state.questionCount}`}
+                : state.topic && state.topic.number > 0
+                  ? t("play.topicProgress", {
+                      name: state.topic.name.trim() || t("play.topicFallback"),
+                      n: state.topic.number,
+                      total: state.topic.total,
+                    })
+                  : `Q${state.questionIndex + 1}/${state.questionCount}`}
             </p>
             <h2 className="font-display text-2xl font-bold leading-tight sm:text-3xl">
               {q.text}

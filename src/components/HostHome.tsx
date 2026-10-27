@@ -22,6 +22,8 @@ function phaseText(
       return t("admin.phaseLocked");
     case "reveal":
       return t("admin.phaseReveal");
+    case "topic":
+      return t("admin.phaseTopic");
     default:
       return t("admin.phaseFinished");
   }

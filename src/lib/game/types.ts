@@ -4,6 +4,8 @@ export type Question = {
   options: [string, string, string, string];
   correctIndex: 0 | 1 | 2 | 3;
   timeLimitSec: number;
+  /** Consecutive questions with the same name are one topic. Blank means ungrouped. */
+  topic?: string;
 };
 
 export type Team = {
@@ -20,7 +22,13 @@ export type Player = {
   lastSeenAt: number;
 };
 
-export type GamePhase = "lobby" | "question" | "locked" | "reveal" | "finished";
+export type GamePhase =
+  | "lobby"
+  | "question"
+  | "locked"
+  | "reveal"
+  | "topic"
+  | "finished";
 
 export type RevealInfo = {
   correctIndex: number;
@@ -56,6 +64,13 @@ export type PublicGameState = {
   tiebreak: boolean;
   /** Teams allowed to answer the spare question. */
   tiebreakTeamIds: string[];
+  /** Set once the night has more than one topic. */
+  topic: {
+    name: string;
+    /** 1-based index within the topic. 0 while the topic card is up. */
+    number: number;
+    total: number;
+  } | null;
 };
 
 export type AdminGameState = PublicGameState & {

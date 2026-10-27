@@ -9,6 +9,7 @@ import { useLocale } from "@/components/LocaleProvider";
 import { TimerRing } from "@/components/TimerRing";
 import { SAMPLE_QUESTIONS } from "@/lib/game/sampleQuestions";
 import { firstPlace } from "@/lib/game/tiebreak";
+import { hasTopicRounds, nextTopicName, topicBlocks, topicProgress } from "@/lib/game/topics";
 import type { Question } from "@/lib/game/types";
 import { isHostUnlocked } from "@/lib/hostSession";
 import { useGameState } from "@/lib/socket/GameProvider";
@@ -36,6 +37,8 @@ function phaseLabel(
       return t("admin.phaseLocked");
     case "reveal":
       return t("admin.phaseReveal");
+    case "topic":
+      return t("admin.phaseTopic");
     default:
       return t("admin.phaseFinished");
   }
@@ -94,7 +97,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!adminState) return;
-    if (adminState.phase === "lobby") {
+    if (adminState.phase === "lobby" || adminState.phase === "topic") {
       setQuestionsOpen(true);
     } else {
       setQuestionsOpen(false);
@@ -362,6 +365,27 @@ export default function AdminPage() {
   const questionTotal = editing
     ? draftQuestions.length
     : adminState.questionCount;
+  const upcomingTopicName = nextTopicName(
+    adminState.questions,
+    adminState.questionIndex,
+  );
+  const openingTopic = upcomingTopicName !== null;
+  const resumeTopic =
+    phase === "lobby" && adminState.questionIndex >= 0
+      ? topicProgress(adminState.questions, adminState.questionIndex + 1)
+      : null;
+  const resumeAtTopicStart = resumeTopic?.number === 1;
+  const topicLine =
+    adminState.topic && adminState.topic.number > 0
+      ? t("admin.topicProgress", {
+          name: adminState.topic.name.trim() || t("admin.topicFallback"),
+          n: adminState.topic.number,
+          total: adminState.topic.total,
+        })
+      : null;
+  const groupedQuestions =
+    hasTopicRounds(adminState.questions) ||
+    adminState.questions.some((item) => (item.topic ?? "").trim());
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8 lg:px-10">
@@ -476,19 +500,30 @@ export default function AdminPage() {
               )}
             </div>
             {!regularDone && (
-              <button
-                type="button"
-                className={teamCount > 0 ? "btn btn-primary" : "btn btn-ghost"}
-                disabled={busy}
-                onClick={() => {
-                  handleStart().catch(() => undefined);
-                }}
-              >
-                {t("admin.startQuestionOf", {
-                  n: nextQuestionNumber,
-                  total: questionTotal,
-                })}
-              </button>
+              <>
+                {resumeAtTopicStart && resumeTopic && (
+                  <h2 className="font-display text-4xl leading-none">
+                    {resumeTopic.name.trim() || t("admin.topicFallback")}
+                  </h2>
+                )}
+                <button
+                  type="button"
+                  className={
+                    teamCount > 0 ? "btn btn-primary self-start" : "btn btn-ghost self-start"
+                  }
+                  disabled={busy}
+                  onClick={() => {
+                    handleStart().catch(() => undefined);
+                  }}
+                >
+                  {resumeAtTopicStart && resumeTopic
+                    ? t("admin.startQuestionOf", { n: 1, total: resumeTopic.total })
+                    : t("admin.startQuestionOf", {
+                        n: nextQuestionNumber,
+                        total: questionTotal,
+                      })}
+                </button>
+              </>
             )}
             {offerTiebreak && (
               <button
@@ -506,6 +541,31 @@ export default function AdminPage() {
                 {t("admin.runTiebreak")}
               </button>
             )}
+          </div>
+        )}
+
+        {phase === "topic" && adminState.topic && (
+          <div className="card-panel flex flex-col gap-4 p-5">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--accent)]">
+              {t("admin.phaseTopic")}
+            </p>
+            <h2 className="font-display text-5xl leading-none">
+              {adminState.topic.name.trim() || t("admin.topicFallback")}
+            </h2>
+            <p className="text-[var(--muted)]">{t("admin.topicReady")}</p>
+            <button
+              type="button"
+              className="btn btn-primary self-start"
+              disabled={busy}
+              onClick={() => {
+                handleStart().catch(() => undefined);
+              }}
+            >
+              {t("admin.startQuestionOf", {
+                n: 1,
+                total: adminState.topic.total,
+              })}
+            </button>
           </div>
         )}
 
@@ -595,7 +655,12 @@ export default function AdminPage() {
               disabled={busy}
               onClick={() => nextQuestion().catch(() => undefined)}
             >
-              {t("admin.nextQuestion")}
+              {openingTopic
+                ? t("admin.openTopic", {
+                    name:
+                      (upcomingTopicName ?? "").trim() || t("admin.topicFallback"),
+                  })
+                : t("admin.nextQuestion")}
             </button>
           )}
           {offerTiebreak && (
@@ -637,7 +702,8 @@ export default function AdminPage() {
             <span className="text-sm text-[var(--muted)] capitalize">
               {adminState.tiebreak
                 ? t("admin.tiebreaker")
-                : `Q${adminState.questionIndex + 1}/${adminState.questionCount}`}
+                : topicLine ??
+                  `Q${adminState.questionIndex + 1}/${adminState.questionCount}`}
             </span>
           </div>
         </div>
@@ -700,7 +766,8 @@ export default function AdminPage() {
                 <p className="text-sm text-[var(--muted)]">
                   {adminState.tiebreak
                     ? t("admin.tiebreaker")
-                    : t("admin.questionN", { n: adminState.questionIndex + 1 })}
+                    : topicLine ??
+                      t("admin.questionN", { n: adminState.questionIndex + 1 })}
                   {phase === "locked"
                     ? t("admin.questionLocked")
                     : adminState.timerPaused
@@ -1053,13 +1120,34 @@ export default function AdminPage() {
           {questionsOpen &&
             (!editing ? (
               <div>
-                <ol className="grid gap-x-8 gap-y-1 text-sm text-[var(--muted)] sm:grid-cols-2">
-                  {adminState.questions.map((item, idx) => (
-                    <li key={item.id} className="min-w-0">
-                      {idx + 1}. {item.text}
-                    </li>
-                  ))}
-                </ol>
+                {groupedQuestions ? (
+                  <div className="space-y-4">
+                    {topicBlocks(adminState.questions).map((block) => (
+                      <div key={block.start}>
+                        <h3 className="font-display text-xl">
+                          {block.name.trim() || t("admin.topicFallback")}
+                        </h3>
+                        <ol className="mt-1 grid gap-y-1 text-sm text-[var(--muted)]">
+                          {adminState.questions
+                            .slice(block.start, block.end)
+                            .map((item, offset) => (
+                              <li key={item.id} className="min-w-0">
+                                {block.start + offset + 1}. {item.text}
+                              </li>
+                            ))}
+                        </ol>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <ol className="grid gap-x-8 gap-y-1 text-sm text-[var(--muted)] sm:grid-cols-2">
+                    {adminState.questions.map((item, idx) => (
+                      <li key={item.id} className="min-w-0">
+                        {idx + 1}. {item.text}
+                      </li>
+                    ))}
+                  </ol>
+                )}
                 <p className="mt-3 text-sm text-[var(--muted)]">
                   {adminState.spareQuestion
                     ? t("admin.spareReady", { text: adminState.spareQuestion.text })

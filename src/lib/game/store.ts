@@ -18,6 +18,7 @@ import {
 } from "./persist";
 import { LOBBY_CODE_LENGTH } from "./code";
 import { tiedLeaders } from "./tiebreak";
+import { nextTopicName, topicProgress } from "./topics";
 import type {
   AdminGameState,
   CreateNightInput,
@@ -175,8 +176,24 @@ function restoreFromRecord(record: NightRecord): GameRoom {
 
 function activeQuestion(room: GameRoom): Question | undefined {
   if (room.tiebreak) return room.spareQuestion ?? undefined;
-  if (room.phase === "lobby" || room.questionIndex < 0) return undefined;
+  if (
+    room.phase === "lobby" ||
+    room.phase === "topic" ||
+    room.questionIndex < 0
+  ) {
+    return undefined;
+  }
   return room.questions[room.questionIndex];
+}
+
+function publicTopic(room: GameRoom): PublicGameState["topic"] {
+  if (room.tiebreak) return null;
+  if (room.phase === "topic") {
+    const progress = topicProgress(room.questions, room.questionIndex + 1);
+    return progress ? { ...progress, number: 0 } : null;
+  }
+  if (room.phase === "lobby" || room.questionIndex < 0) return null;
+  return topicProgress(room.questions, room.questionIndex);
 }
 
 export function toPublic(room: GameRoom): PublicGameState {
@@ -211,6 +228,7 @@ export function toPublic(room: GameRoom): PublicGameState {
     answeredTeamIds: Object.keys(room.currentAnswers),
     tiebreak: Boolean(room.tiebreak),
     tiebreakTeamIds: room.tiebreakTeamIds ?? [],
+    topic: publicTopic(room),
   };
 }
 
@@ -543,6 +561,7 @@ class GameStore {
 
     room.questions = questions.map((q) => ({
       ...q,
+      topic: typeof q.topic === "string" ? q.topic.trim() : "",
       timeLimitSec: room.timeLimitSec,
     }));
 
@@ -585,6 +604,37 @@ class GameStore {
   }
 
   startQuestion(room: GameRoom) {
+    return startQuestionOnRoom(room);
+  }
+
+  /** Pause on the next topic name. The host starts the first question from there. */
+  openNextTopic(room: GameRoom) {
+    if (room.phase !== "reveal") throw new Error("Reveal the answer first");
+    if (room.tiebreak) throw new Error("The tiebreak is already underway");
+    if (nextTopicName(room.questions, room.questionIndex) === null) {
+      throw new Error("The next question is in this topic");
+    }
+    room.phase = "topic";
+    room.currentAnswers = {};
+    room.reveal = null;
+    room.timerEndsAt = null;
+    room.timerPausedRemainingMs = null;
+    room.lockedAt = null;
+  }
+
+  /** From a reveal, open the next topic or start the next question. */
+  advanceAfterReveal(room: GameRoom): "topic" | "started" | "finished" {
+    if (room.phase === "question") throw new Error("Lock the question first");
+    if (room.phase === "locked") throw new Error("Wait for the reveal");
+    if (room.phase === "topic") return startQuestionOnRoom(room);
+    if (room.questionIndex + 1 >= room.questions.length) {
+      this.finishGame(room);
+      return "finished";
+    }
+    if (nextTopicName(room.questions, room.questionIndex) !== null) {
+      this.openNextTopic(room);
+      return "topic";
+    }
     return startQuestionOnRoom(room);
   }
 
@@ -649,6 +699,18 @@ class GameStore {
   returnToLobby(room: GameRoom) {
     if (room.phase === "finished") throw new Error("This night is over");
     if (room.phase === "lobby") return;
+
+    if (room.phase === "topic") {
+      room.phase = "lobby";
+      room.currentAnswers = {};
+      room.reveal = null;
+      room.timerEndsAt = null;
+      room.timerPausedRemainingMs = null;
+      room.lockedAt = null;
+      room.tiebreak = false;
+      room.tiebreakTeamIds = [];
+      return;
+    }
 
     if (room.phase === "reveal" && room.reveal) {
       for (const award of room.reveal.awarded) {

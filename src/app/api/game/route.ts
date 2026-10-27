@@ -197,19 +197,9 @@ export async function POST(req: NextRequest) {
 
       case "nextQuestion": {
         const code = await adminCode(body);
-        const result = await gameStore.mutate(code, (room) => {
-          if (room.phase === "question") {
-            throw new Error("Lock the question first");
-          }
-          if (room.phase === "locked") {
-            throw new Error("Wait for the reveal");
-          }
-          if (room.questionIndex + 1 >= room.questions.length) {
-            gameStore.finishGame(room);
-            return "finished";
-          }
-          return gameStore.startQuestion(room);
-        });
+        const result = await gameStore.mutate(code, (room) =>
+          gameStore.advanceAfterReveal(room),
+        );
         return NextResponse.json(await afterMutate(code, { result }));
       }
 

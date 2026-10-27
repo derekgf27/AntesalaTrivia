@@ -86,9 +86,15 @@ function DisplayInner() {
     state.phase === "reveal";
   const progressLabel = state.tiebreak
     ? t("display.tiebreaker")
-    : inPlay && state.questionCount > 0
-      ? `Q${state.questionIndex + 1} / ${state.questionCount}`
-      : null;
+    : state.topic && state.topic.number > 0
+      ? t("display.topicProgress", {
+          name: state.topic.name.trim() || t("display.topicFallback"),
+          n: state.topic.number,
+          total: state.topic.total,
+        })
+      : inPlay && state.questionCount > 0
+        ? `Q${state.questionIndex + 1} / ${state.questionCount}`
+        : null;
   const correctOpt =
     state.phase === "reveal" && state.reveal && q
       ? q.options[state.reveal.correctIndex]
@@ -127,7 +133,7 @@ function DisplayInner() {
             )}
           </div>
         </div>
-        {inPlay && (
+        {(inPlay || state.phase === "topic") && (
           <div className="text-right">
             <p className="text-sm uppercase tracking-[0.2em] text-[var(--muted)]">
               {t("display.lobbyCode")}
@@ -138,6 +144,29 @@ function DisplayInner() {
           </div>
         )}
       </header>
+
+      {state.phase === "topic" && state.topic && (
+        <section
+          className={`mt-8 grid flex-1 items-center gap-10 ${
+            state.showScores ? "lg:grid-cols-[1.2fr_0.8fr]" : ""
+          }`}
+        >
+          <div>
+            <p className="text-sm uppercase tracking-[0.28em] text-[var(--accent)]">
+              {t("display.upNext")}
+            </p>
+            <h1 className="font-display mt-3 text-6xl leading-none sm:text-7xl lg:text-8xl">
+              {state.topic.name.trim() || t("display.topicFallback")}
+            </h1>
+          </div>
+          {state.showScores && (
+            <aside className="card-panel p-6">
+              <h2 className="font-display mb-4 text-3xl">{t("display.leaderboard")}</h2>
+              <Leaderboard teams={state.teams} />
+            </aside>
+          )}
+        </section>
+      )}
 
       {state.phase === "lobby" && (
         <section className="mt-8 grid flex-1 items-center gap-10 lg:grid-cols-[auto_1fr] lg:gap-16">
